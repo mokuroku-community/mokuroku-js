@@ -4,70 +4,27 @@ on:
   push:
     branches:
       - main
+      - develop
+    paths:
+      - 'packages/core/**'
+      - 'packages/bullmq/**'
+      - '.github/workflows/ci.yml'
+      - 'package.json'
+      - 'tsconfig.json'
+      - 'turbo.json'
   pull_request:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to run the workflow on'
+        required: false
+        default: 'develop'
 
 jobs:
-  determine-affected:
-    name: Determine affected packages
+
+  test:
+    name: test
     runs-on: ubuntu-latest
-    outputs:
-      packages: ${{ steps.set-matrix.outputs.packages }}
-      should_run: ${{ steps.set-matrix.outputs.should_run }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: changes
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            core:
-              - 'packages/core/**'
-            bullmq:
-              - 'packages/bullmq/**'
-            global:
-              - '.github/workflows/ci.yml'
-              - 'package.json'
-              - 'tsconfig.json'
-              - 'turbo.json'
-      - id: set-matrix
-        run: |
-          core_entry='{"id":"core","filter":"@mokurokujs/core"}'
-          bullmq_entry='{"id":"bullmq","filter":"@mokurokujs/bullmq"}'
-          selected=()
-
-          if [[ "${{ steps.changes.outputs.global }}" == 'true' ]]; then
-            selected+=("$core_entry" "$bullmq_entry")
-          else
-            if [[ "${{ steps.changes.outputs.core }}" == 'true' ]]; then
-              selected+=("$core_entry")
-            fi
-            if [[ "${{ steps.changes.outputs.bullmq }}" == 'true' ]]; then
-              selected+=("$bullmq_entry")
-            fi
-          fi
-
-          if [[ ${#selected[@]} -eq 0 ]]; then
-            {
-              echo "should_run=false"
-              echo "packages=[]"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          IFS=,
-          {
-            echo "should_run=true"
-            echo "packages=[${selected[*]}]"
-          } >> "$GITHUB_OUTPUT"
-        shell: bash
-
-  build:
-    name: build (${{ matrix.pkg.id }})
-    needs: determine-affected
-    if: needs.determine-affected.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        pkg: ${{ fromJson(needs.determine-affected.outputs.packages) }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -80,18 +37,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build
-        run: pnpm --filter "${{ matrix.pkg.filter }}" build
+        run: pnpm build
       - name: Typecheck
-        run: pnpm --filter "${{ matrix.pkg.filter }}" typecheck
+        run: pnpm typecheck
+      - name: Test
+        run: pnpm test
 
   lint:
-    name: lint (${{ matrix.pkg.id }})
-    needs: determine-affected
-    if: needs.determine-affected.outputs.should_run == 'true'
+    name: lint
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        pkg: ${{ fromJson(needs.determine-affected.outputs.packages) }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -104,4 +58,4 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Lint
-        run: pnpm --filter "${{ matrix.pkg.filter }}" lint
+        run: pnpm lint
