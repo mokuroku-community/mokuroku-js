@@ -1,0 +1,40 @@
+{
+  "name": "@mokurokujs/bullmq",
+  "version": "0.0.1",
+  "description": "BullMQ package for mokuroku-js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "lint": "pnpm exec -- biome lint .",
+    "format:fix": "pnpm exec -- biome check . --fix"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@mokurokujs/core": "workspace:*",
+    "bullmq": "^5.66.0",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "tsup": "catalog:",
+    "typescript": "catalog:"
+  }
+}

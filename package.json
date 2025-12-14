@@ -1,0 +1,23 @@
+{
+    "name": "mokurokujs",
+    "version": "0.0.1",
+    "description": "mokuroku-js",
+    "private": true,
+    "packageManager": "pnpm@10.25.0",
+    "type": "module",
+    "scripts": {
+        "build": "turbo run build",
+        "dev": "turbo run dev",
+        "clean": "turbo run clean",
+        "typecheck": "turbo run typecheck",
+        "lint": "turbo run lint",
+        "format:fix": "turbo run format:fix"
+    },
+    "dependencies": {},
+    "devDependencies": {
+        "@biomejs/biome": "catalog:",
+        "turbo": "catalog:",
+        "typescript": "catalog:",
+        "tsup": "catalog:"
+    }
+}
