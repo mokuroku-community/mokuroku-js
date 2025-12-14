@@ -1,0 +1,36 @@
+{
+  "name": "@mokurokujs/core",
+  "version": "0.0.1",
+  "description": "Core package for mokuroku-js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "lint": "pnpm exec -- biome lint .",
+    "format:fix": "pnpm exec -- biome check . --fix"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "catalog:",
+    "tsup": "catalog:"
+  }
+}
