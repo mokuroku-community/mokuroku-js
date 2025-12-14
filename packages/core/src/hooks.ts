@@ -1,4 +1,3 @@
-import type { RegisterHandlerOptions } from "./backend.js";
 import type { JobHandlerContext } from "./handler.js";
 
 /**
