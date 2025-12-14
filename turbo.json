@@ -28,6 +28,12 @@
                 "^format:fix"
             ]
         },
+        "test": {
+            "dependsOn": [
+                "^test"
+            ],
+            "outputs": []
+        },
         "clean": {
             "cache": false
         }

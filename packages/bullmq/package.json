@@ -22,6 +22,7 @@
     "dev": "tsup --watch",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "lint": "pnpm exec -- biome lint .",
     "format:fix": "pnpm exec -- biome check . --fix"
   },
@@ -34,7 +35,10 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@testcontainers/redis": "^11.10.0",
+    "testcontainers": "^11.10.0",
     "tsup": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "^4.0.15"
   }
 }

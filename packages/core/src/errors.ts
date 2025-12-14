@@ -1,5 +1,3 @@
-import type { JobRuntime } from "./runtime.js";
-
 /**
  * Stable error codes exposed by `@mokurokujs/core`.
  * `code` is intended for log/metrics grouping (avoid message string matching).
