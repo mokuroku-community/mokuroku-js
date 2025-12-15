@@ -31,15 +31,18 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "@mokurokujs/core": "workspace:*",
-    "bullmq": "^5.66.0",
-    "zod": "^4.1.13"
+    "@mokurokujs/core": "workspace:>=0.0.1",
+    "zod": "^4.0.0"
+  },
+  "peerDependencies": {
+    "bullmq": "^3.0.0 || ^4.0.0 || ^5.0.0"
   },
   "devDependencies": {
-    "@testcontainers/redis": "^11.10.0",
-    "testcontainers": "^11.10.0",
+    "@testcontainers/redis": "11.10.0",
+    "bullmq": "5.66.0",
+    "testcontainers": "11.10.0",
     "tsup": "catalog:",
     "typescript": "catalog:",
-    "vitest": "^4.0.15"
+    "vitest": "4.0.15"
   }
 }
