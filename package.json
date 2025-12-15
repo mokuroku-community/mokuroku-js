@@ -2,6 +2,10 @@
   "name": "mokurokujs",
   "version": "0.0.1",
   "description": "mokuroku-js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mokuroku-community/mokuroku-js"
+  },
   "private": true,
   "packageManager": "pnpm@10.25.0",
   "type": "module",
