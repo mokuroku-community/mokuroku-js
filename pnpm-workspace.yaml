@@ -5,4 +5,3 @@ catalog:
   typescript: ^5.0.0
   tsup: 8.5.1
   "@biomejs/biome": 2.3.8
-  turbo: 2.6.3
