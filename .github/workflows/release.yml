@@ -1,55 +1,37 @@
-name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
-
-permissions:
-  contents: write
+    branches: [develop]
 
 jobs:
-  publish-and-release:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # tag / release 作成に必要
+      pull-requests: write   # Version Packages PR 作成に必要
+      id-token: write        # npm OIDC に必須
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - uses: ./.github/actions/setup-pnpm
+
+      - run: pnpm build --if-present
+      - run: pnpm test --if-present
+
+      - name: Version or Publish
+        id: changesets
+        uses: changesets/action@v1
         with:
-          version: 10.25.0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'pnpm'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Build packages
-        run: pnpm build
-
-      - name: Publish @mokurokujs/core
-        run: npm publish --access public --no-git-checks
-        working-directory: packages/core
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish @mokurokujs/bullmq
-        run: npm publish --access public --no-git-checks
-        working-directory: packages/bullmq
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          generate_release_notes: true
+          version: pnpm version-packages
+          publish: pnpm release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.changesets.outputs.published == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.changesets.outputs.tag }}
+          name: Release ${{ steps.changesets.outputs.tag }}
+          generate_release_notes: true

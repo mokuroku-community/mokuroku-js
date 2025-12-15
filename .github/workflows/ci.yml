@@ -27,15 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
         with:
-          version: 10.25.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'pnpm'
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
+      - uses: ./.github/actions/setup-pnpm
       - name: Build
         run: pnpm build
       - name: Typecheck
@@ -48,14 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
         with:
-          version: 10.25.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'pnpm'
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
+      - uses: ./.github/actions/setup-pnpm
       - name: Lint
         run: pnpm lint
