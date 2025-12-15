@@ -17,8 +17,8 @@ jobs:
 
       - uses: ./.github/actions/setup-pnpm
 
-      - run: pnpm build --if-present
-      - run: pnpm test --if-present
+      - run: pnpm build
+      - run: pnpm test
 
       - name: Version or Publish
         id: changesets
