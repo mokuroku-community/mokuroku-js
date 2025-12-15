@@ -11,7 +11,6 @@ import type {
   JobHandlerContext,
   JobLogger,
   JobRemovePolicy,
-  JobRuntime,
   QueueDefinition,
   RegisterHandlerOptions,
   WorkerHooks,

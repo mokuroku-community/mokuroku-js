@@ -340,7 +340,7 @@ export class BullMQQueueManager {
         }),
         details: { timeout: options.timeout },
       });
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      let timeoutHandle: Parameters<typeof clearTimeout>[0] | undefined;
       const gracefulClose = closeWorkers(false);
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => reject(timeoutError), options.timeout);

@@ -1,7 +1,6 @@
 import { type ErrorCode, ErrorCodes, MokurokuError } from "@mokurokujs/core";
 
 import type { QueueDefinition } from "@mokurokujs/core";
-import type { BullMQQueueManager } from "./queue-manager.js";
 
 /**
  * BullMQ adapter error codes (extends `@mokurokujs/core`).
