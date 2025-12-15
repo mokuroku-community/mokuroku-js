@@ -36,20 +36,20 @@ importers:
   packages/bullmq:
     dependencies:
       '@mokurokujs/core':
-        specifier: workspace:*
+        specifier: workspace:>=0.0.1
         version: link:../core
-      bullmq:
-        specifier: ^5.66.0
-        version: 5.66.0
       zod:
-        specifier: ^4.1.13
+        specifier: ^4.0.0
         version: 4.1.13
     devDependencies:
       '@testcontainers/redis':
-        specifier: ^11.10.0
+        specifier: 11.10.0
         version: 11.10.0
+      bullmq:
+        specifier: 5.66.0
+        version: 5.66.0
       testcontainers:
-        specifier: ^11.10.0
+        specifier: 11.10.0
         version: 11.10.0
       tsup:
         specifier: 'catalog:'
@@ -58,7 +58,7 @@ importers:
         specifier: 'catalog:'
         version: 5.9.3
       vitest:
-        specifier: ^4.0.15
+        specifier: 4.0.15
         version: 4.0.15(@types/node@25.0.2)(yaml@2.8.2)
 
   packages/core:
