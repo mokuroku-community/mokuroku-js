@@ -47,6 +47,47 @@ jobs:
       - name: Test
         run: pnpm test
 
+  bullmq-compat:
+    name: bullmq compat (bullmq@${{ matrix.bullmq }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        bullmq: ["^5.0.0"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+      - uses: ./.github/actions/setup-pnpm
+        with:
+          install: 'false'
+      - name: Set bullmq version for adapter
+        shell: bash
+        env:
+          BULLMQ_VERSION: ${{ matrix.bullmq }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          
+          const path = 'packages/bullmq/package.json';
+          const pkg = JSON.parse(readFileSync(path, 'utf8'));
+          
+          pkg.devDependencies ??= {};
+          pkg.devDependencies.bullmq = process.env.BULLMQ_VERSION;
+          
+          writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          NODE
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Build core
+        run: pnpm --filter @mokurokujs/core build
+      - name: Build adapter
+        run: pnpm --filter @mokurokujs/bullmq-adapter build
+      - name: Typecheck adapter
+        run: pnpm --filter @mokurokujs/bullmq-adapter typecheck
+      - name: Test adapter
+        run: pnpm --filter @mokurokujs/bullmq-adapter test
+
   lint:
     name: lint
     runs-on: ubuntu-latest
