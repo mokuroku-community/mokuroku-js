@@ -13,6 +13,16 @@ on:
       - 'tsconfig.json'
       - 'turbo.json'
   pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'packages/core/**'
+      - 'packages/bullmq/**'
+      - '.github/workflows/ci.yml'
+      - 'package.json'
+      - 'tsconfig.json'
+      - 'turbo.json'
   workflow_dispatch:
     inputs:
       branch:
@@ -28,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.branch || github.ref_name }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
       - uses: ./.github/actions/setup-pnpm
       - name: Build
         run: pnpm build
@@ -43,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.branch || github.ref_name }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
       - uses: ./.github/actions/setup-pnpm
       - name: Lint
         run: pnpm lint
