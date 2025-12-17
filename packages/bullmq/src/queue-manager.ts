@@ -217,7 +217,7 @@ export class BullMQQueueManager {
     });
 
     worker.on("completed", (job) => {
-      options?.logger?.info("job.completed", {
+      options?.logger?.debug("job.completed", {
         jobName: job.name,
         jobId: job.id,
       });
