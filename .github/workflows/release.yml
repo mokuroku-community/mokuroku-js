@@ -28,25 +28,3 @@ jobs:
           publish: pnpm release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create GitHub Release
-        if: steps.changesets.outputs.published == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const publishedPackages = JSON.parse(`${{ steps.changesets.outputs.publishedPackages }}`);
-            core.info(`publishedPackages: ${JSON.stringify(publishedPackages)}`);
-
-            for (const pkg of publishedPackages) {
-              const tag = `${pkg.name}@${pkg.version}`;
-              core.info(`Creating GitHub Release for ${tag}`);
-
-              await github.rest.repos.createRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag_name: tag,
-                target_commitish: context.sha,
-                name: `Release ${tag}`,
-                generate_release_notes: true,
-              });
-            }
