@@ -1,5 +1,11 @@
 # @mokurokujs/bullmq-adapter
 
+## 0.0.3
+
+### Patch Changes
+
+- [#8](https://github.com/mokuroku-community/mokuroku-js/pull/8) [`a0c560b`](https://github.com/mokuroku-community/mokuroku-js/commit/a0c560b125c62be889f594cd5349219eb8829da0) Thanks [@samunohito](https://github.com/samunohito)! - fix completed log level
+
 ## 0.0.2
 
 ### Patch Changes
