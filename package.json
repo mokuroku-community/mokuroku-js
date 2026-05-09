@@ -7,7 +7,7 @@
     "url": "https://github.com/mokuroku-community/mokuroku-js"
   },
   "private": true,
-  "packageManager": "pnpm@10.25.0",
+  "packageManager": "pnpm@10.28.2",
   "type": "module",
   "scripts": {
     "build": "turbo run build",
