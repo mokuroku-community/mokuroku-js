@@ -1,0 +1,29 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended"
+  ],
+  timezone: 'Asia/Tokyo',
+  labels: [
+    'dependencies',
+    'renovate',
+  ],
+  dependencyDashboardApproval: true,
+  dependencyDashboardAutoclose: true,
+  osvVulnerabilityAlerts: true,
+  dependencyDashboardOSVVulnerabilitySummary: 'unresolved',
+  minimumReleaseAge: '7 days',
+  packageRules: [
+    {
+      groupName: 'Non-breaking updates',
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+        'digest',
+      ],
+      matchJsonata: [
+        'isBreaking != true',
+      ],
+    },
+  ],
+}
