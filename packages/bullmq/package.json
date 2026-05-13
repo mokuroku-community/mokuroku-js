@@ -43,11 +43,11 @@
     "bullmq": "^5.0.0"
   },
   "devDependencies": {
-    "@testcontainers/redis": "11.10.0",
-    "bullmq": "5.66.0",
-    "testcontainers": "11.10.0",
+    "@testcontainers/redis": "11.14.0",
+    "bullmq": "5.76.6",
+    "testcontainers": "11.14.0",
     "tsup": "catalog:",
     "typescript": "catalog:",
-    "vitest": "4.0.15"
+    "vitest": "4.1.5"
   }
 }
