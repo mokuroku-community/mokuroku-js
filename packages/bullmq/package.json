@@ -1,6 +1,6 @@
 {
   "name": "@mokurokujs/bullmq-adapter",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "BullMQ adapter package for mokuroku-js",
   "repository": {
     "type": "git",
