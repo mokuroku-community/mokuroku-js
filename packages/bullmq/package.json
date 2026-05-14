@@ -40,11 +40,11 @@
     "zod": "^4.0.0"
   },
   "peerDependencies": {
-    "bullmq": "^5.0.0"
+    "bullmq": "^5.16.0"
   },
   "devDependencies": {
     "@testcontainers/redis": "11.14.0",
-    "bullmq": "5.76.6",
+    "bullmq": "5.16.0",
     "testcontainers": "11.14.0",
     "tsup": "catalog:",
     "typescript": "catalog:",
