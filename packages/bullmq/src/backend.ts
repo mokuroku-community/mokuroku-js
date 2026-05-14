@@ -138,15 +138,16 @@ export class BullmqBackend implements JobBackend {
   /**
    * Convert {@link JobRemovePolicy} into BullMQ-compatible keep-jobs options.
    *
-   * Currently this is a pass-through because the shapes are compatible.
-   *
    * {@link JobRemovePolicy} を BullMQ の keep-jobs 形式へ変換する。
-   * 現状は形が互換なのでそのまま返す。
    */
-  private convertRemovePolicy(
-    policy: JobRemovePolicy | undefined,
-  ): boolean | number | { age?: number; count?: number } | undefined {
-    return policy;
+  private convertRemovePolicy(policy: JobRemovePolicy | undefined): JobsOptions["removeOnComplete"] {
+    if (typeof policy !== "object" || policy === null) {
+      return policy;
+    }
+    if (policy.age !== undefined) {
+      return { age: policy.age, count: policy.count };
+    }
+    return { count: policy.count ?? 0 };
   }
 
   /**
