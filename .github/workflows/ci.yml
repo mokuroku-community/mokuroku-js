@@ -53,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bullmq: ["^5.0.0"]
+        bullmq: ["^5.16.0"]
     steps:
       - uses: actions/checkout@v6
         with:
