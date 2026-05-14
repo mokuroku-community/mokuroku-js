@@ -140,3 +140,7 @@ vite.config.ts.timestamp-*
 
 # Turbo cache
 .turbo/
+
+# pnpm
+.pnpm-store/
+.pnpm-debug.log*
