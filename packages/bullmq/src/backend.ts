@@ -163,6 +163,7 @@ export class BullmqBackend implements JobBackend {
       removeOnComplete: this.convertRemovePolicy(enqueueOptions?.removeOnComplete ?? jobDef.options.removeOnComplete),
       removeOnFail: this.convertRemovePolicy(enqueueOptions?.removeOnFail ?? jobDef.options.removeOnFail),
       delay: enqueueOptions?.delay,
+      jobId: enqueueOptions?.jobId,
     };
   }
 

@@ -68,6 +68,16 @@ export interface EnqueueOptions {
    * 遅延実行（ミリ秒）。
    */
   delay?: number;
+  /**
+   * Override or set the backend-specific job identifier.
+   * When the backend supports it, enqueueing twice with the same `jobId`
+   * keeps the first job and lets the backend ignore the duplicate.
+   *
+   * バックエンド固有のジョブIDを指定する。
+   * バックエンドが対応している場合、同じ `jobId` で2回 enqueue すると
+   * 最初のジョブが保持され、重複分はバックエンド側で無視される。
+   */
+  jobId?: string;
 }
 
 /**
