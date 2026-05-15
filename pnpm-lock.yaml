@@ -39,7 +39,7 @@ importers:
   packages/bullmq:
     dependencies:
       '@mokurokujs/core':
-        specifier: workspace:>=0.0.1
+        specifier: workspace:>=0.1.0
         version: link:../core
       zod:
         specifier: ^4.0.0
