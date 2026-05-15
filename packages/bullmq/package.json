@@ -1,6 +1,6 @@
 {
   "name": "@mokurokujs/bullmq-adapter",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "description": "BullMQ adapter package for mokuroku-js",
   "repository": {
     "type": "git",
@@ -36,7 +36,7 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "@mokurokujs/core": "workspace:>=0.0.1",
+    "@mokurokujs/core": "workspace:>=0.1.0",
     "zod": "^4.0.0"
   },
   "peerDependencies": {
