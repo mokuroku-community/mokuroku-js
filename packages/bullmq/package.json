@@ -48,6 +48,6 @@
     "testcontainers": "11.14.0",
     "tsup": "catalog:",
     "typescript": "catalog:",
-    "vitest": "4.1.5"
+    "vitest": "4.1.11"
   }
 }
