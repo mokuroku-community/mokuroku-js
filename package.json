@@ -19,7 +19,9 @@
     "format:fix": "turbo run format:fix",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "changeset publish"
+    "release": "changeset publish",
+    "pack:prep": "node scripts/pack-preparation.mjs",
+    "verify:packed": "node scripts/verify-packed-consumer.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",

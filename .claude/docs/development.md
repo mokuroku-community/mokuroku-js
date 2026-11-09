@@ -2,7 +2,7 @@
 
 ## 前提条件
 
-- **Node.js**: 推奨バージョンは `package.json` の `engines` フィールドを参照してください。
+- **Node.js**: CI は Node.js 24 を使用（現在 package.json に engines 指定はありません）。
 - **pnpm**: 10.x（`package.json` の `packageManager` フィールドで指定）
 - **Docker**: BullMQ アダプターのテストに Redis TestContainers を使用するため必要
 
@@ -55,7 +55,7 @@ mokuroku-js（ルート）
 └── packages/bullmq       @mokurokujs/bullmq-adapter（core に依存）
 ```
 
-**依存の方向は `core → bullmq` の一方向のみです。** `packages/core` が `packages/bullmq` に依存することは禁止です。
+**依存の方向は `bullmq → core / BullMQ` の一方向のみです。** `packages/core` が `packages/bullmq` に依存することは禁止です。
 
 ### Turbo タスク定義（turbo.json）
 

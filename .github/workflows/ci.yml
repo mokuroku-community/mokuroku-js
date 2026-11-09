@@ -6,6 +6,7 @@ on:
       - main
       - develop
     paths:
+      - 'scripts/**'
       - 'packages/core/**'
       - 'packages/bullmq/**'
       - '.github/workflows/ci.yml'
@@ -19,6 +20,7 @@ on:
       - main
       - develop
     paths:
+      - 'scripts/**'
       - 'packages/core/**'
       - 'packages/bullmq/**'
       - '.github/workflows/ci.yml'
@@ -35,14 +37,27 @@ on:
         default: 'develop'
 
 jobs:
+  source:
+    name: pin source commit
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.sha }}
+      - id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   test:
     name: test
+    needs: source
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+          ref: ${{ needs.source.outputs.sha }}
       - uses: ./.github/actions/setup-pnpm
       - name: Build
         run: pnpm build
@@ -55,6 +70,7 @@ jobs:
 
   bullmq-compat:
     name: bullmq compat (bullmq@${{ matrix.bullmq }})
+    needs: source
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -63,7 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+          ref: ${{ needs.source.outputs.sha }}
       - uses: ./.github/actions/setup-pnpm
         with:
           install: 'false'
@@ -80,8 +96,6 @@ jobs:
           
           pkg.devDependencies ??= {};
           pkg.devDependencies.bullmq = process.env.BULLMQ_VERSION;
-          // Validate the candidate peer range in CI before widening the published manifest.
-          pkg.peerDependencies.bullmq = '^5.16.0 || ^6.3.11';
           
           writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
           NODE
@@ -107,11 +121,38 @@ jobs:
 
   lint:
     name: lint
+    needs: source
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+          ref: ${{ needs.source.outputs.sha }}
       - uses: ./.github/actions/setup-pnpm
       - name: Lint
         run: pnpm lint
+
+  packed-consumer:
+    name: packed consumer (BullMQ 5.16.0 / 6.3.11)
+    needs: [source, test, bullmq-compat, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: ./.github/actions/setup-pnpm
+      - name: Pack clean commit
+        id: prep
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          pnpm pack:prep "$RUNNER_TEMP/mokuroku-prep" --require-clean
+      - name: Verify tarball consumers with owned Redis
+        run: pnpm verify:packed "$RUNNER_TEMP/mokuroku-prep"
+      - name: Upload preparation artifacts and receipts
+        if: always() && steps.prep.outputs.sha != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: mokuroku-prep-${{ steps.prep.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mokuroku-prep/
+          if-no-files-found: error
+          retention-days: 30

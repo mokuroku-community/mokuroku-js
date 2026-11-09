@@ -232,3 +232,19 @@ BullMQ peer は実検証後に `^5.16.0 || ^6.3.11`。adapter の core 依存は
 
 PR 用成果物は別 staging directory で両 package を `0.0.0-prep.g<FULL_SHA>` とし、adapter の core 依存を同じ版へ固定する。利用側は両 tarball を取得し、pnpm override で transitive core も同じ tarball に固定する。peer 条件は強制無視しない。
 
+
+### Redis driver contract (Task3 correction)
+
+BullMQ 5.16.0 は ioredis `^5.4.1` を依存に持つが、6.3.11 は `>=5` の optional peer。
+options 経路を両方で使う利用側は ioredis を明示導入する。adapter は `ioredis: ^5.0.0`
+を optional peer、開発依存は `5.11.1` とする。構築済みの互換 client を借用する利用側は
+自身の driver を管理する。runtime を変更せず、隔離 consumer は `ioredis: 5.11.1` を
+明示して実解決版を receipt に記録する。BullMQ peer 範囲と `workspace:^` は維持する。
+
+pack の source fingerprint は tracked / nonignored untracked 全ファイルと両 package の src（ignore 対象も含む）の名前・mode・内容を
+含み、build / pack の前後で一致を検査する。dirty preview の版には fingerprint を含める。
+依存の snapshot / hash は作らない。source symlink は拒否し、固定 source snapshot とは称さない。
+ビルド出力は一時 staging のみに生成し、adapter の宣言はそこで作った core 宣言を参照する。
+内部 command helper は Linux の専用 process group を使い、3分の期限・終了 code を検査する。
+終了時には子孫も TERM/KILL し、直接子の close と全 group member の実行終了を待ってから
+一時出力を削除する。daemon 化・setsid で group を離れる command は対象外。

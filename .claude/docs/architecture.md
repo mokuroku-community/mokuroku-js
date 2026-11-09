@@ -8,7 +8,7 @@ mokuroku-js はストラテジーパターンを採用し、ジョブキュー�
 
 ### 主要な型・インターフェース
 
-#### `JobDefinition<TPayload>`
+#### `JobDefinition<TPayload, TResult = void>`
 
 ジョブの名前とデフォルトオプションを保持する型です。`defineJob()` ファクトリ関数で生成します。`TPayload` はジョブのペイロード型で、ランタイムでは使用されず型情報の保持のみに利用します。
 
@@ -58,13 +58,10 @@ type JobRemovePolicy = boolean | number | { age?: number; count?: number };
 
 #### `QueueDefinition`
 
-1 つ以上の `JobDefinition` を持つキューを定義します。`defineQueue()` または `QueueBuilder` で生成します。
+キュー名と backend 設定を定義します。ジョブは `defineJob(name, { queue })` で紐付けます。`defineQueue()` または `QueueBuilder` で生成します。
 
 ```typescript
-const notificationQueue = defineQueue("notification")
-  .addJob(emailJob)
-  .addJob(smsJob)
-  .build();
+const notificationQueue = defineQueue("notification").build();
 ```
 
 #### `JobRuntime`
@@ -72,11 +69,12 @@ const notificationQueue = defineQueue("notification")
 アプリケーションのエントリーポイントとなるファサードクラスです。`JobBackend` を注入して生成します。
 
 ```typescript
-const runtime = new JobRuntime(new BullmqBackend({ connection: redisConnection }));
+const queueManager = new BullMQQueueManager(redisConnection);
+const runtime = new JobRuntime(new BullmqBackend({ queueManager }));
 
 // ハンドラー登録（start() の前に行うこと）
-runtime.handle(emailJob, async (ctx) => {
-  await sendEmail(ctx.payload);
+runtime.handle(emailJob, async (payload, ctx) => {
+  await sendEmail(payload);
 });
 
 await runtime.start();
@@ -118,7 +116,8 @@ interface JobBackend {
   enqueue<TPayload>(job, payload, options?): Promise<EnqueueResult>;
   enqueueBulk<TPayload>(job, items): Promise<EnqueueResult[]>;
   registerHandler<TPayload>(job, handler, options?): void;
-  start(): Promise<void>;
+  ready?(queues?, options?): Promise<void>;
+  start(options?): Promise<void>;
   stop(options?): Promise<void>;
   pauseAll(): Promise<void>;
   resumeAll(): Promise<void>;
@@ -167,7 +166,7 @@ BullMQ の `Queue` / `Worker` を `JobBackend` インターフェースにマッ
 
 ### 依存関係
 
-- **ピア依存**: `bullmq ^5.0.0`
+- **ピア依存**: `bullmq ^5.16.0 || ^6.3.11`
 - **直接依存**: `@mokurokujs/core`, `zod ^4.0.0`
 
 ### ファイル構成
@@ -176,7 +175,7 @@ BullMQ の `Queue` / `Worker` を `JobBackend` インターフェースにマッ
 |---------|------|
 | `backend.ts` | `BullmqBackend`（`JobBackend` の BullMQ 実装） |
 | `queue-manager.ts` | `BullMQQueueManager`（Queue / Worker ライフサイクル管理） |
-| `scheduler.ts` | `BullmqScheduler`（cron パターンによる繰り返しジョブ） |
+| `scheduler.ts` | `BullmqJobScheduler`（cron パターンによる繰り返しジョブ） |
 | `helper.ts` | ユーティリティヘルパー |
 | `types.ts` | `BullmqQueueDefinition` および関連型 |
 | `errors.ts` | BullMQ 固有エラー型 |
@@ -189,3 +188,21 @@ BullMQ の `Queue` / `Worker` を `JobBackend` インターフェースにマッ
 4. 必要に応じて `JobScheduler` インターフェース（`packages/core/src/scheduler.ts`）を実装する。
 5. `packages/bullmq/` を参考に `tsup.config.ts` と `vitest.config.ts` を作成する。
 6. `tsconfig.json`（ルート）の `references` に新しいパッケージを追加する。
+
+## Queue lifecycle (#254)
+
+`JobDefinition<TPayload, TResult = void>` と `JobHandler<TPayload, TResult = void>` は
+結果型を保持します。`handle` の payload / result、enqueue / scheduler の payload は
+定義から `NoInfer` で固定します（TypeScript 5.4 以上）。backend 境界の結果型は `unknown`。
+`EnqueueResult` は結果取得 API ではなく `{ jobId, name }` のままです。
+
+`handle(job, handler, { defaultForQueue: true })` は同じ queue の名前一致に続く fallback。
+登録・hooks は queue ごとに分離し、保存済み name/data/options と `ctx.jobName` は維持します。
+`runtime.ready(queues?, { timeout }?)` は Worker を作らず接続を待ち、start は全 Worker の
+command / blocking 接続準備後に処理を開始します。manager の第2引数 `onError` は障害を通知し、
+再接続・process exit は利用側が決めます。
+
+producer-only stop も Queue を解放します。全 Worker の settlement 後に全 Queue の close を試し、
+失敗を集約します。timeout は操作全体の期限で、reject 後も cleanup を継続します。
+借用 client は quit/disconnect しません。詳細な競合・停止契約は
+[公開設計](../../docs/superpowers/specs/2026-11-09-mokuroku-queue-lifecycle-254-design.md)を参照。

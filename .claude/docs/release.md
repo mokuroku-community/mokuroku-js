@@ -74,3 +74,21 @@ pnpm changeset status
 # バージョンを手動で更新（CI が行うため通常は不要）
 pnpm version-packages
 ```
+
+## #254 の準備成果物（publish なし）
+
+今回の型の floor（TypeScript 5.4 / NoInfer）、登録・停止契約の変更は両 package の
+major Changeset に記録します。追跡 manifest の `0.1.0` は変更しません。
+`pnpm pack:prep <workspace 外の空 directory> [--require-clean]` は fresh build した dist を
+staging にコピーし、両 package を同じ `0.0.0-prep.g<FULL_SHA>` に設定、adapter の core
+依存も同じ exact version にして pack します。通常の公開依存は `workspace:^` を維持します。
+`pnpm verify:packed <directory>` で tarball 消費を検証します。
+
+manifest は source SHA / dirty state / 入力の名前・mode・内容 fingerprint（build 前後一致）/ tool versions / SHA-512 integrity / artifact metadata と
+pack command の結果、consumer receipt は型検査・Redis 検証の結果を保存します。
+dirty なローカル検証を clean commit の証拠として扱いません。CI は clean commit を必須にし、
+30日保持の artifact を run / commit / attempt で固定します。
+[取得・再生成・#255 の残責任](../../docs/handoffs/254.md)を参照してください。
+
+options 経路には ioredis 5.x を利用側が明示導入します（optional peer）。検証 consumer は
+ioredis 5.11.1 を固定し、receipt に実解決版を記録します。借用 client の driver は利用側が管理します。

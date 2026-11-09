@@ -146,4 +146,4 @@ REQUIRE_REDIS_TESTS=1 pnpm --filter @mokurokujs/bullmq-adapter test
 
 3タスクは順次実行する。将来の並列化は、Task 1 の契約確定後の「docs 本文」と「adapter 実装」、および Task 2 後の別 directory を使う BullMQ 5/6 pack consumer 検証に限ればファイルが重ならない。`backend.ts`、`queue-manager.ts`、manifest、lockfile、CI は単一担当とする。今回は worker を起動していない。
 
-今回実施したのは読み取りとメモリ内型検査のみ。現行 adapter は BullMQ 5.16.0 で型エラー0件、6.3.11 で5件を再確認した。旧 backend の構造互換 probe は通過したが、完全な fixture、実 Redis、pack、CodeRabbit、PR は上記 PLAN の未実施作業である。専用 clone の差分はない。
+**履歴（初期 discovery 時点。現在の状態は [handoff](../../handoffs/254.md) を参照）:** 今回実施したのは読み取りとメモリ内型検査のみ。現行 adapter は BullMQ 5.16.0 で型エラー0件、6.3.11 で5件を再確認した。旧 backend の構造互換 probe は通過したが、完全な fixture、実 Redis、pack、CodeRabbit、PR は上記 PLAN の未実施作業である。専用 clone の差分はない。

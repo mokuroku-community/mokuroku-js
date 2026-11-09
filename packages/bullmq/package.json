@@ -42,14 +42,21 @@
     "zod": "^4.0.0"
   },
   "peerDependencies": {
-    "bullmq": "^5.16.0 || ^6.3.11"
+    "bullmq": "^5.16.0 || ^6.3.11",
+    "ioredis": "^5.0.0"
   },
   "devDependencies": {
     "@testcontainers/redis": "11.14.0",
     "bullmq": "5.16.0",
+    "ioredis": "5.11.1",
     "testcontainers": "11.14.0",
     "tsup": "catalog:",
     "typescript": "catalog:",
     "vitest": "4.1.11"
+  },
+  "peerDependenciesMeta": {
+    "ioredis": {
+      "optional": true
+    }
   }
 }

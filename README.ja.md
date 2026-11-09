@@ -9,13 +9,13 @@
 ## パッケージ構成
 
 - `@mokurokujs/core`: MQ 実装に依存しない抽象型群 + ランタイムファサード
-- `@mokurokujs/bullmq`: BullMQ アダプタ（backend + scheduler + helper）
+- `@mokurokujs/bullmq-adapter`: BullMQ アダプタ（backend + scheduler + helper）
 
 ## 主要コンセプト（MQ 非依存）
 
-- **`JobDefinition<TPayload>`**: `defineJob()` で作る型付きジョブ定義
+- **`JobDefinition<TPayload, TResult = void>`**: `defineJob()` で作る型付きジョブ定義
 - **`QueueDefinition`**: `defineQueue()` で作るキュー定義（MQ 固有設定を保持可能）
-- **`JobRuntime`**: アプリ側が使う入口（`enqueue`, `enqueueBulk`, `handle`, `start`, `stop`, pause/resume）
+- **`JobRuntime`**: アプリ側が使う入口（`enqueue`, `enqueueBulk`, `handle`, `ready`, `start`, `stop`, pause/resume）
 - **`JobBackend`**: MQ アダプタが実装するインターフェース（例: BullMQ）
 - **`JobScheduler` / `SchedulerRuntime`**: cron / repeatable job を扱うためのファサード
 - **Hook**:
@@ -31,8 +31,14 @@ npm install @mokurokujs/core
 BullMQ を使う場合（Redis が必要）:
 
 ```bash
-npm install @mokurokujs/core @mokurokujs/bullmq
+npm install @mokurokujs/core @mokurokujs/bullmq-adapter bullmq ioredis@^5.0.0
 ```
+
+接続 options を渡す経路（`new BullMQQueueManager({ host, port })`）には
+`ioredis` 5.x が必要です。BullMQ 6 では optional peer のため自動導入されません。
+adapter も `ioredis: ^5.0.0` を optional peer とします。互換性のある構築済み client を
+借用で渡す場合は、利用側がその driver の導入と client の寿命を管理します。
+隔離 consumer では ioredis 5.11.1 を検証します。
 
 ## クイックスタート（BullMQ）
 
@@ -42,7 +48,7 @@ import {
   BullMQQueueManager,
   createBullmqBackend,
   defineQueueForBullMQ,
-} from "@mokurokujs/bullmq";
+} from "@mokurokujs/bullmq-adapter";
 
 // BullMQ connection (Redis)
 const queueManager = new BullMQQueueManager({
@@ -102,7 +108,7 @@ BullMQ アダプタは BullMQ の repeatable job を使って `JobScheduler` を
 
 ```ts
 import { defineJob, SchedulerRuntime } from "@mokurokujs/core";
-import { BullMQQueueManager, createBullmqScheduler } from "@mokurokujs/bullmq";
+import { BullMQQueueManager, createBullmqScheduler } from "@mokurokujs/bullmq-adapter";
 
 const queueManager = new BullMQQueueManager({ host: "127.0.0.1", port: 6379 });
 const scheduler = createBullmqScheduler({ queueManager });
@@ -143,3 +149,46 @@ pnpm lint
 ## ライセンス
 
 Apache-2.0（`LICENSE` を参照）。
+
+## キューのライフサイクルと互換性
+
+TypeScript **5.4 以上**（公開宣言に `NoInfer` を使用）、BullMQ
+**`^5.16.0 || ^6.3.11`** に対応します。import の依存方向は adapter → core / BullMQ
+であり、core は adapter に依存しません。追跡中の版は両方 `0.1.0` のままで、
+今回の変更は両 package の major release に向けた準備です。
+
+```ts
+const Deliver = defineJob<{ id: string }, string>("deliver", { queue: emailQueue });
+runtime.handle(Deliver, async (payload, ctx) => {
+  console.log(ctx.jobName); // 動的な名前も含め、保存済みの名前を維持
+  return `delivered:${payload.id}`;
+}, { defaultForQueue: true });
+await runtime.ready([emailQueue], { timeout: 10_000 }); // 接続だけを準備、Worker は作らない
+await runtime.start({ timeout: 10_000 });
+await runtime.enqueue(Deliver, { id: "42" }, { jobName: "saved-dynamic-name" });
+await runtime.stop({ timeout: 10_000 });
+```
+
+同一キューでは名前一致 → そのキューの default の順に選択します。default は1件だけです。
+handler の失敗は retry 方針に従い、default への切替は行いません。保存済み name/data/options
+は維持します。結果は BullMQ の `returnvalue` に保存されます。enqueue の戻り値は引き続き
+`{ jobId, name }` です。型定義は Redis に保存済みのデータを検証しません。
+
+登録は idle 中に行います。重複 default、起動後の登録、停止中の新規操作は reject します。
+`ready()` は default queue を準備し、`ready([])` は既存リソースだけを待ちます。
+未対応 backend の readiness は `InvalidStateError` と `details.capability: "ready"` を返します。
+
+producer-only は start せず ready / enqueue / stop を使います。stop は Worker がない場合も
+管理 Queue を解放し、Worker がある場合は drain 後に Queue を閉じます。timeout は reject
+後も cleanup を継続します。cleanup 失敗後は新 manager が必要です。借用 Redis client の
+解放は呼出側の責任です。backend / scheduler が manager を共有すると寿命も共有するため、
+producer と worker の寿命を分ける場合は manager も分けます。
+
+manager の constructor 第2引数に `{ onError(event) { /* 利用側の方針 */ } }` を渡すと、
+queue / worker の `error`、`cleanup`、`connection-ended` と worker の
+`run-fulfilled` / `run-rejected` を監視できます。通常の error は診断であり、予期しない
+接続・run 終了は利用側が異常停止を判断する材料です。process exit や再接続方針は利用側が
+決めます。既存の worker hooks も維持しています。
+
+[設計](docs/superpowers/specs/2026-11-09-mokuroku-queue-lifecycle-254-design.md)と
+[成果物・#255 handoff](docs/handoffs/254.md)に検証状況と publish しない導入手順を記載しています。
