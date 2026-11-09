@@ -240,6 +240,40 @@ describe("lifecycle races and fault isolation", () => {
     await start;
     await backend.stop();
   });
+  it.each(["close", "reconnecting"])("keeps startup pending through recoverable %s until ready", async (status) => {
+    const { manager, backend, events } = fixture();
+    manager.getOrCreateQueue(queue);
+    const client = queues()[0].connection._client;
+    client.status = status;
+    let settled = false;
+    const start = backend.start().then(
+      () => {
+        settled = true;
+      },
+      (error) => {
+        settled = true;
+        return error;
+      },
+    );
+    try {
+      await tick();
+      client.emit("close");
+      await tick();
+      expect(events).toEqual([]);
+      expect(settled).toBe(false);
+      expect(queues()[0].closed).toBe(false);
+      client.status = "ready";
+      client.emit("ready");
+      await expect(start).resolves.toBeUndefined();
+      await backend.ready([]);
+      // A later terminal loss must still be reported after recovery.
+      client.disconnect();
+      expect(events).toEqual([expect.objectContaining({ reason: "connection-ended" })]);
+    } finally {
+      await backend.stop();
+      await start;
+    }
+  });
   it("latches a previously ready connection failure while another Queue is pending", async () => {
     const { manager, backend } = fixture();
     manager.getOrCreateQueue(queue);

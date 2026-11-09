@@ -62,6 +62,8 @@ export class ConnectionMonitor {
     if (this.clients.has(client)) return;
     this.clients.add(client);
     const ended = () => {
+      // A recoverable close leaves retry policy with ioredis. / 再接続可能な close は終端ではない。
+      if (client.status !== "end") return;
       if (this.expected() || this.intentionalDisconnects > 0 || this.ended) return;
       this.ended = true;
       this.failed(new Error("Redis connection ended"));

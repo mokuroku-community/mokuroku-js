@@ -78,6 +78,7 @@ redisSuite("options and actual retry transitions", () => {
       await f.backend.enqueue(job, {});
       await f.backend.start();
       await until(async () => (await f.raw.getCompletedCount()) + (await f.raw.getFailedCount()) === 1);
+      await until(() => (delay === -1 ? failures.length : success.length) >= 1);
       expect(calls).toHaveLength(1);
       expect(calls[0].slice(0, 3)).toEqual([1, "custom", failure]);
       expect(calls[0][3]).toMatchObject({ name: "retry" });
@@ -111,6 +112,7 @@ redisSuite("options and actual retry transitions", () => {
       await f.backend.enqueue(job, {});
       await f.backend.start();
       await until(async () => (await f.raw.getFailedCount()) === 1);
+      await until(() => failed.length >= 1);
       expect(failed).toEqual([1]);
       expect(retried).toEqual([]);
     } finally {
@@ -133,6 +135,7 @@ redisSuite("options and actual retry transitions", () => {
       await f.backend.enqueue(job, {});
       await f.backend.start();
       await until(async () => (await f.raw.getCompletedCount()) === 1);
+      await until(() => successes.length >= 1);
       expect(attempts).toEqual([1, 2, 3]);
       expect(retries).toEqual([1, 2]);
       expect(successes).toEqual([3]);

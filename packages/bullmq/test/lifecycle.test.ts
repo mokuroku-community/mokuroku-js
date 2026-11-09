@@ -34,6 +34,65 @@ redisSuite("real Redis lifecycle", () => {
       await f.close();
     }
   });
+  it.each([
+    "queue",
+    "command",
+    "blocking",
+  ])("survives a retry-enabled %s connection kill during readiness", async (kind) => {
+    const f = fixture();
+    let worker: Worker<unknown, unknown, string> | undefined;
+    const create = f.manager.createWorker.bind(f.manager);
+    vi.spyOn(f.manager, "createWorker").mockImplementation(async (...args) => {
+      worker = await create(...args);
+      return worker;
+    });
+    const job = defineJob("reconnect");
+    f.backend.registerHandler(job, async () => {});
+    let pending: Promise<unknown> | undefined;
+    try {
+      await f.backend.start();
+      if (!worker) throw new Error("Worker was not created");
+      const client =
+        kind === "queue"
+          ? await redisClient(f.manager.getOrCreateQueue(f.queue))
+          : await redisClient(worker, kind === "blocking");
+      if (!("retryStrategy" in client.options)) throw new Error("Expected a standalone Redis client");
+      client.options.retryStrategy = () => 250;
+      let settled = false;
+      // Install the pending operation before the monitor sees the actual socket close.
+      // 実際の close 通知に先行して readiness 待機を設置する。
+      const closed = gate();
+      client.prependOnceListener("close", () => {
+        pending = f.backend.ready([], { timeout: 5000 }).then(
+          () => {
+            settled = true;
+          },
+          (error) => {
+            settled = true;
+            return error;
+          },
+        );
+        closed.resolve();
+      });
+      const id = await client.call("CLIENT", "ID");
+      await (await redisClient(f.raw)).call("CLIENT", "KILL", "ID", String(id));
+      await closed.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(client.status).toBe("reconnecting");
+      expect(settled).toBe(false);
+      await expect(pending).resolves.toBeUndefined();
+      expect(client.status).toBe("ready");
+      expect(await client.ping()).toBe("PONG");
+      const item = await f.backend.enqueue(job, {});
+      await until(async () => (await f.raw.getJob(item.jobId))?.finishedOn !== undefined);
+      await f.backend.stop();
+      expect(f.events.filter((event) => (event as { reason: string }).reason !== "error")).toEqual([]);
+    } finally {
+      await f.close();
+      await pending;
+      vi.restoreAllMocks();
+    }
+  });
   it.each(["queue", "command", "blocking"])("notifies an individually killed %s connection", async (kind) => {
     const f = fixture();
     let worker: Worker<unknown, unknown, string> | undefined;

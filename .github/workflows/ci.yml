@@ -36,6 +36,9 @@ on:
         required: false
         default: 'develop'
 
+permissions:
+  contents: read
+
 jobs:
   source:
     name: pin source commit
@@ -45,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.sha }}
       - id: source
         shell: bash
@@ -57,6 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           ref: ${{ needs.source.outputs.sha }}
       - uses: ./.github/actions/setup-pnpm
       - name: Build
@@ -79,6 +84,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           ref: ${{ needs.source.outputs.sha }}
       - uses: ./.github/actions/setup-pnpm
         with:
@@ -126,6 +132,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           ref: ${{ needs.source.outputs.sha }}
       - uses: ./.github/actions/setup-pnpm
       - name: Lint
@@ -138,6 +145,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           ref: ${{ needs.source.outputs.sha }}
       - uses: ./.github/actions/setup-pnpm
       - name: Pack clean commit
