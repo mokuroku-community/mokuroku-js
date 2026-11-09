@@ -2,6 +2,6 @@ packages:
   - "packages/*"
 
 catalog:
-  typescript: ^5.0.0
+  typescript: ^5.4.0
   tsup: 8.5.1
   "@biomejs/biome": 2.4.14

@@ -17,11 +17,14 @@ export class SchedulerRuntime {
     this.scheduler = scheduler;
   }
 
-  async upsert<TPayload>(job: JobDefinition<TPayload>, options: JobScheduleOptions<TPayload>): Promise<void> {
+  async upsert<TPayload>(
+    job: JobDefinition<TPayload, unknown>,
+    options: JobScheduleOptions<NoInfer<TPayload>>,
+  ): Promise<void> {
     await this.scheduler.upsert(job, options);
   }
 
-  async remove<TPayload>(job: JobDefinition<TPayload>): Promise<void> {
+  async remove<TPayload>(job: JobDefinition<TPayload, unknown>): Promise<void> {
     await this.scheduler.remove(job);
   }
 }

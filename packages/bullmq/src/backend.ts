@@ -1,5 +1,7 @@
 import { formatInvalidStateMessage, HandlerNotRegisteredError, InvalidStateError } from "@mokurokujs/core";
 
+import { cancelled, validateLifecycle, withDeadline } from "./lifecycle-operation.js";
+
 import type {
   BackendHooks,
   BulkEnqueueItem,
@@ -9,6 +11,7 @@ import type {
   JobDefinition,
   JobHandler,
   JobHandlerContext,
+  JobLifecycleOptions,
   JobLogger,
   JobRemovePolicy,
   QueueDefinition,
@@ -79,27 +82,18 @@ export class BullmqBackend implements JobBackend {
   private readonly logger?: JobLogger;
   private readonly hooks: BackendHooks;
 
-  private readonly handlers = new Map<string, JobHandler<unknown>>();
-  /**
-   * Job-level hooks configured via `registerHandler(..., { hooks })`.
-   *
-   * `registerHandler(..., { hooks })` で設定されるジョブ単位フック。
-   */
-  private readonly jobHooks = new Map<string, WorkerHooks>();
-
-  /**
-   * Mapping from handled job name → queue definition.
-   *
-   * This is the source of truth for worker creation:
-   * - Only jobs that have handlers registered contribute to worker creation.
-   * - Multiple jobs on the same queue are processed by a single worker.
-   *
-   * handler 登録済みジョブ名 → キュー定義の対応表。
-   * Worker 作成の根拠として使う:
-   * - handler 登録されたジョブのみが Worker 作成対象になる
-   * - 同じキューに属する複数ジョブは1つの Worker で処理する
-   */
-  private readonly handledJobsQueueMap = new Map<string, BullMQQueueDefinition>();
+  private readonly registrations = new Map<
+    string,
+    {
+      queue: BullMQQueueDefinition;
+      named: Map<string, { handler: JobHandler<unknown, unknown>; hooks?: WorkerHooks }>;
+      defaultName?: string;
+    }
+  >();
+  private starting?: Promise<void>;
+  private startWork?: Promise<void>;
+  private stopping?: Promise<void>;
+  private controller?: AbortController;
 
   /**
    * Backend lifecycle state.
@@ -155,8 +149,11 @@ export class BullmqBackend implements JobBackend {
    *
    * job 既定値と enqueue 上書きを合成して BullMQ の {@link JobsOptions} を作る。
    */
-  private buildJobsOptions<TPayload>(jobDef: JobDefinition<TPayload>, enqueueOptions?: EnqueueOptions): JobsOptions {
-    return {
+  private buildJobsOptions<TPayload>(
+    jobDef: JobDefinition<TPayload, unknown>,
+    enqueueOptions?: EnqueueOptions,
+  ): JobsOptions {
+    const values: JobsOptions = {
       attempts: enqueueOptions?.attempts ?? jobDef.options.attempts,
       backoff: enqueueOptions?.backoff ?? jobDef.options.backoff,
       priority: jobDef.options.priority,
@@ -165,13 +162,20 @@ export class BullmqBackend implements JobBackend {
       delay: enqueueOptions?.delay,
       jobId: enqueueOptions?.jobId,
     };
+    return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
+  }
+
+  private assertNotStopping(): void {
+    if (this.state === "stopping")
+      throw new InvalidStateError({ message: "Backend is stopping", details: { backendState: this.state } });
   }
 
   async enqueue<TPayload>(
-    jobDef: JobDefinition<TPayload>,
-    payload: TPayload,
+    jobDef: JobDefinition<TPayload, unknown>,
+    payload: NoInfer<TPayload>,
     enqueueOptions?: EnqueueOptions,
   ): Promise<EnqueueResult> {
+    this.assertNotStopping();
     const queueDef = jobDef.options.queue ?? this.defaultQueue;
     const queue = this.queueManager.getOrCreateQueue(queueDef);
 
@@ -194,9 +198,10 @@ export class BullmqBackend implements JobBackend {
   }
 
   async enqueueBulk<TPayload>(
-    jobDef: JobDefinition<TPayload>,
-    items: BulkEnqueueItem<TPayload>[],
+    jobDef: JobDefinition<TPayload, unknown>,
+    items: BulkEnqueueItem<NoInfer<TPayload>>[],
   ): Promise<EnqueueResult[]> {
+    this.assertNotStopping();
     const queueDef = jobDef.options.queue ?? this.defaultQueue;
     const queue = this.queueManager.getOrCreateQueue(queueDef);
 
@@ -223,113 +228,150 @@ export class BullmqBackend implements JobBackend {
     }));
   }
 
-  registerHandler<TPayload>(
-    jobDef: JobDefinition<TPayload>,
-    handler: JobHandler<TPayload>,
+  registerHandler<TPayload, TResult = void>(
+    jobDef: JobDefinition<TPayload, TResult>,
+    handler: JobHandler<NoInfer<TPayload>, NoInfer<TResult>>,
     options?: RegisterHandlerOptions,
   ): void {
-    if (this.handlers.has(jobDef.name)) {
-      this.logger?.warn(`Handler for job "${jobDef.name}" is being replaced`);
-    }
-    this.handlers.set(jobDef.name, handler as JobHandler<unknown>);
-    const queueDef = this.normalizeQueueDefinition(jobDef.options.queue ?? this.defaultQueue);
-    // `start()` がキューごとに1つだけ Worker を作れるよう対応表を記録する。
-    this.handledJobsQueueMap.set(jobDef.name, queueDef);
-    // 共有キューマネージャー側で合成できるよう、ジョブ単位フックを保存する。
-    if (options?.hooks) {
-      this.jobHooks.set(jobDef.name, options.hooks as WorkerHooks);
-    }
-  }
-
-  async start(): Promise<void> {
-    if (this.state === "started") {
-      this.logger?.warn("Backend is already started, ignoring duplicate start() call");
-      return;
-    }
-    if (this.state === "starting") {
-      this.logger?.warn("Backend is currently starting, ignoring duplicate start() call");
-      return;
-    }
-    if (this.state === "stopping") {
+    if (this.state !== "idle")
       throw new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "backend.start",
-          subject: "backend",
-          state: `backend:${this.state}`,
-        }),
+        message: "Handlers can only be registered while idle",
         details: { backendState: this.state },
       });
+    const queue = this.normalizeQueueDefinition(jobDef.options.queue ?? this.defaultQueue);
+    const registration = this.registrations.get(queue.name) ?? { queue, named: new Map(), defaultName: undefined };
+    if (
+      options?.defaultForQueue &&
+      registration.defaultName !== undefined &&
+      registration.defaultName !== jobDef.name
+    ) {
+      throw new InvalidStateError({
+        message: "Queue already has a default handler",
+        details: { queue: queue.name, jobName: jobDef.name },
+      });
     }
-
-    this.state = "starting";
-
-    try {
-      // handler 登録されたジョブのキューを集約し、キューごとに Worker を作る。
-      const queuesByName = new Map<string, BullMQQueueDefinition>();
-
-      for (const [, queueDef] of this.handledJobsQueueMap.entries()) {
-        if (!queuesByName.has(queueDef.name)) {
-          queuesByName.set(queueDef.name, queueDef);
-        }
-      }
-
-      for (const [, queueDef] of queuesByName.entries()) {
-        const processor = async (job: Job) => {
-          const handler = this.handlers.get(job.name);
-          if (!handler) {
-            const error = new HandlerNotRegisteredError(job.name);
-            this.logger?.error(error.message, {
-              code: error.code,
-              details: error.details,
-            });
-            throw error;
-          }
-
-          const ctx: JobHandlerContext = {
-            jobName: job.name,
-            jobId: String(job.id),
-            attempt: job.attemptsMade + 1,
-            timestamp: new Date(job.timestamp),
-            logger: this.logger,
-            rawJob: job,
-          };
-
-          await handler(job.data, ctx);
-        };
-
-        await this.queueManager.createWorker(queueDef, processor, {
-          logger: this.logger,
-          backendHooks: this.hooks,
-          jobHooks: this.jobHooks,
-        });
-      }
-
-      this.state = "started";
-    } catch (error) {
-      this.state = "idle";
-      throw error;
-    }
+    registration.named.set(jobDef.name, {
+      handler: handler as JobHandler<unknown, unknown>,
+      hooks: options?.hooks as WorkerHooks | undefined,
+    });
+    if (options?.defaultForQueue) registration.defaultName = jobDef.name;
+    else if (registration.defaultName === jobDef.name) registration.defaultName = undefined;
+    this.registrations.set(queue.name, registration);
   }
 
-  async stop(options?: { timeout?: number }): Promise<void> {
-    if (this.state === "idle") {
-      this.logger?.warn("Backend is not started, ignoring stop() call");
-      return;
-    }
-    if (this.state === "stopping") {
-      this.logger?.warn("Backend is already stopping, ignoring duplicate stop() call");
-      return;
-    }
+  async ready(queues?: readonly QueueDefinition[], options?: JobLifecycleOptions): Promise<void> {
+    validateLifecycle(options);
+    this.assertNotStopping();
+    await this.queueManager.ready(queues ?? [this.defaultQueue], options);
+  }
 
-    this.state = "stopping";
-
+  start(options?: JobLifecycleOptions): Promise<void> {
     try {
-      await this.queueManager.closeAll(options);
-      this.state = "idle";
+      validateLifecycle(options);
+      if (this.stopping) this.assertNotStopping();
+      if (this.starting) return this.starting;
+      this.assertNotStopping();
     } catch (error) {
-      this.state = "idle";
-      throw error;
+      return Promise.reject(error);
     }
+    if (this.state === "started") return Promise.resolve();
+    this.state = "starting";
+    const controller = new AbortController();
+    this.controller = controller;
+    const operation = this.queueManager
+      .waitForReady(controller.signal, async () => {
+        for (const registration of this.registrations.values()) {
+          if (controller.signal.aborted) throw cancelled();
+          this.queueManager.getOrCreateQueue(registration.queue);
+          const select = (name: string) =>
+            registration.named.get(name) ??
+            (registration.defaultName === undefined ? undefined : registration.named.get(registration.defaultName));
+          const processor = async (job: Job<unknown, unknown, string>) => {
+            const selected = select(job.name);
+            if (!selected) throw new HandlerNotRegisteredError(job.name);
+            const ctx: JobHandlerContext = {
+              jobName: job.name,
+              jobId: String(job.id),
+              attempt: job.attemptsMade + 1,
+              timestamp: new Date(job.timestamp),
+              logger: this.logger,
+              rawJob: job,
+            };
+            return await selected.handler(job.data, ctx);
+          };
+          await this.queueManager.createWorker(registration.queue, processor, {
+            logger: this.logger,
+            backendHooks: this.hooks,
+            selectHooks: (name) => select(name)?.hooks,
+          });
+        }
+      })
+      .then(async () => {
+        if (controller.signal.aborted) throw cancelled();
+        await this.queueManager.startWorkers(controller.signal);
+        if (controller.signal.aborted) throw cancelled();
+        this.state = "started";
+      })
+      .catch(async (error: unknown) => {
+        this.state = "stopping";
+        try {
+          await this.queueManager.closeAll();
+        } catch (cleanupError) {
+          throw new AggregateError(
+            cleanupError instanceof AggregateError ? cleanupError.errors : [cleanupError],
+            "Startup failed and cleanup failed",
+            { cause: error },
+          );
+        }
+        throw error;
+      })
+      .finally(() => {
+        this.starting = undefined;
+        this.startWork = undefined;
+        this.controller = undefined;
+        if (this.state !== "started" && !this.stopping) this.state = "idle";
+      });
+    this.startWork = operation;
+    this.starting = withDeadline(operation, options, () => {
+      controller.abort();
+      if (this.startWork) this.state = "stopping";
+      else {
+        // A late success has already left the startup cleanup chain.
+        // 起動完了後に期限超過を検知した場合も Worker / Queue を回収する。
+        void this.stop().catch(() => {}); // Manager diagnostics retain cleanup failures.
+      }
+    });
+    return this.starting;
+  }
+
+  stop(options?: JobLifecycleOptions): Promise<void> {
+    try {
+      validateLifecycle(options);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (this.stopping) return this.stopping;
+    this.state = "stopping";
+    this.controller?.abort();
+    const work = (async () => {
+      if (this.startWork)
+        await this.startWork.catch((error: unknown) => {
+          if (error instanceof AggregateError && error.cause !== undefined) throw error;
+        });
+      await this.queueManager.closeAll();
+    })();
+    this.stopping = withDeadline(work, options);
+    void work.then(
+      () => {
+        this.state = "idle";
+        this.stopping = undefined;
+      },
+      () => {
+        this.state = "idle";
+        this.stopping = undefined;
+      },
+    );
+    return this.stopping;
   }
 
   async pauseAll(): Promise<void> {

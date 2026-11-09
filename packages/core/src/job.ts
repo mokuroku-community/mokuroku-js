@@ -89,7 +89,7 @@ export interface JobOptions {
  * ジョブ定義（名前 + 既定オプション）。
  * {@link JobDefinition} は MQ 非依存で、アダプタ間で共通利用できる。
  */
-export interface JobDefinition<TPayload> {
+export interface JobDefinition<TPayload, TResult = void> {
   readonly name: string;
   readonly options: Readonly<JobOptions>;
   /**
@@ -100,6 +100,11 @@ export interface JobDefinition<TPayload> {
    * 実行時には参照されない。
    */
   readonly __payloadType?: TPayload;
+  /**
+   * Type-only result information; not used at runtime.
+   * 結果型を保持する型専用フィールド。実行時には参照されない。
+   */
+  readonly __resultType?: TResult;
 }
 
 /**
@@ -107,6 +112,9 @@ export interface JobDefinition<TPayload> {
  *
  * ジョブ定義を作成する（MQ 非依存）。
  */
-export function defineJob<TPayload>(name: string, options: JobOptions = {}): JobDefinition<TPayload> {
+export function defineJob<TPayload, TResult = void>(
+  name: string,
+  options: JobOptions = {},
+): JobDefinition<TPayload, TResult> {
   return { name, options };
 }

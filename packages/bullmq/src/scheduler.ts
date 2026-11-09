@@ -73,7 +73,10 @@ export class BullmqJobScheduler implements JobScheduler {
     };
   }
 
-  async upsert<TPayload>(job: JobDefinition<TPayload>, options: JobScheduleOptions<TPayload>): Promise<void> {
+  async upsert<TPayload>(
+    job: JobDefinition<TPayload, unknown>,
+    options: JobScheduleOptions<NoInfer<TPayload>>,
+  ): Promise<void> {
     const queueDef = job.options.queue ?? this.defaultQueue;
     const queue = this.getOrCreateQueue(queueDef);
 
@@ -101,7 +104,7 @@ export class BullmqJobScheduler implements JobScheduler {
     });
   }
 
-  async remove<TPayload>(job: JobDefinition<TPayload>): Promise<void> {
+  async remove<TPayload>(job: JobDefinition<TPayload, unknown>): Promise<void> {
     const queueDef = job.options.queue ?? this.defaultQueue;
     const queue = this.getOrCreateQueue(queueDef);
 
@@ -117,7 +120,7 @@ export class BullmqJobScheduler implements JobScheduler {
    *
    * スケジュール対象の BullMQ queue を取得/作成する。
    */
-  private getOrCreateQueue(queueDef: QueueDefinition): Queue {
+  private getOrCreateQueue(queueDef: QueueDefinition): Queue<unknown, unknown, string> {
     return this.queueManager.getOrCreateQueue(queueDef);
   }
 }

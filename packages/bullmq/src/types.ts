@@ -46,3 +46,20 @@ export type BullMQQueueDefinition = QueueDefinition<{
 export type BullMQConnectionDefinition = QueueDefinition<{
   bullmq: { connection: ConnectionOptions };
 }>;
+
+/** Manager diagnostics; callbacks never control cleanup. / manager の障害通知。 */
+export type BullmqManagerError =
+  | { queue: string; resource: "queue" | "worker"; reason: "error" | "cleanup"; error: Error }
+  | {
+      queue: string;
+      resource: "queue" | "worker";
+      reason: "connection-ended";
+      connection: "command" | "blocking";
+      error: Error;
+    }
+  | { queue: string; resource: "worker"; reason: "run-fulfilled" | "run-rejected"; error: Error };
+
+export interface BullmqQueueManagerOptions {
+  logger?: import("@mokurokujs/core").JobLogger;
+  onError?: (event: BullmqManagerError) => void;
+}

@@ -6,10 +6,13 @@ on:
       - main
       - develop
     paths:
+      - 'scripts/**'
       - 'packages/core/**'
       - 'packages/bullmq/**'
       - '.github/workflows/ci.yml'
       - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'tsconfig.json'
       - 'turbo.json'
   pull_request:
@@ -17,10 +20,13 @@ on:
       - main
       - develop
     paths:
+      - 'scripts/**'
       - 'packages/core/**'
       - 'packages/bullmq/**'
       - '.github/workflows/ci.yml'
       - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'tsconfig.json'
       - 'turbo.json'
   workflow_dispatch:
@@ -30,34 +36,56 @@ on:
         required: false
         default: 'develop'
 
+permissions:
+  contents: read
+
 jobs:
+  source:
+    name: pin source commit
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.sha }}
+      - id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   test:
     name: test
+    needs: source
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.sha }}
       - uses: ./.github/actions/setup-pnpm
       - name: Build
         run: pnpm build
       - name: Typecheck
         run: pnpm typecheck
       - name: Test
+        env:
+          REQUIRE_REDIS_TESTS: "1"
         run: pnpm test
 
   bullmq-compat:
     name: bullmq compat (bullmq@${{ matrix.bullmq }})
+    needs: source
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        bullmq: ["^5.16.0"]
+        bullmq: ["5.16.0", "6.3.11", "^5.16.0", "^6.3.11"]
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.sha }}
       - uses: ./.github/actions/setup-pnpm
         with:
           install: 'false'
@@ -78,23 +106,61 @@ jobs:
           writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
           NODE
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-      - name: Build core
-        run: pnpm --filter @mokurokujs/core build
-      - name: Build adapter
-        run: pnpm --filter @mokurokujs/bullmq-adapter build
-      - name: Typecheck adapter
-        run: pnpm --filter @mokurokujs/bullmq-adapter typecheck
-      - name: Test adapter
+        run: pnpm install --no-frozen-lockfile --strict-peer-dependencies
+      - name: Update to newest release within requested major range
+        if: startsWith(matrix.bullmq, '^')
+        env:
+          BULLMQ_VERSION: ${{ matrix.bullmq }}
+        run: pnpm --filter @mokurokujs/bullmq-adapter update "bullmq@$BULLMQ_VERSION" --config.strict-peer-dependencies=true
+      - name: Resolved BullMQ version
+        run: pnpm --filter @mokurokujs/bullmq-adapter exec node -p "require('bullmq/package.json').version"
+      - name: Fresh build
+        run: pnpm clean && pnpm build --force
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Type contracts
+        run: pnpm --filter @mokurokujs/bullmq-adapter test:types
+      - name: Redis tests (required, no skips)
+        env:
+          REQUIRE_REDIS_TESTS: "1"
         run: pnpm --filter @mokurokujs/bullmq-adapter test
 
   lint:
     name: lint
+    needs: source
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.sha }}
       - uses: ./.github/actions/setup-pnpm
       - name: Lint
         run: pnpm lint
+
+  packed-consumer:
+    name: packed consumer (BullMQ 5.16.0 / 6.3.11)
+    needs: [source, test, bullmq-compat, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: ./.github/actions/setup-pnpm
+      - name: Pack clean commit
+        id: prep
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          pnpm pack:prep "$RUNNER_TEMP/mokuroku-prep" --require-clean
+      - name: Verify tarball consumers with owned Redis
+        run: pnpm verify:packed "$RUNNER_TEMP/mokuroku-prep"
+      - name: Upload preparation artifacts and receipts
+        if: always() && steps.prep.outputs.sha != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: mokuroku-prep-${{ steps.prep.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mokuroku-prep/
+          if-no-files-found: error
+          retention-days: 30

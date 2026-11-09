@@ -34,7 +34,7 @@ mokuroku-js は TypeScript 製の MQ 非依存バックグラウンドジョブ�
 
 | コンセプト | 役割 |
 |-----------|------|
-| `JobDefinition<TPayload>` | ジョブの型・デフォルトオプションを定義する |
+| `JobDefinition<TPayload, TResult = void>` | ジョブの型・デフォルトオプションを定義する |
 | `QueueDefinition` | ジョブとキュー名を紐付ける |
 | `JobRuntime` | エンキュー・ハンドラー登録・ライフサイクル管理のファサード |
 | `JobBackend` | MQ 実装を差し替えるコアインターフェース（ストラテジー） |
@@ -49,7 +49,7 @@ mokuroku-js は TypeScript 製の MQ 非依存バックグラウンドジョブ�
 - **フォーマット**: Biome（インデント 2 スペース、行幅 120、ダブルクォート、末尾セミコロンあり）
 - **コメント**: 英語・日本語バイリンガル JSDoc
 - **ビルドツール**: tsup（ESM 出力、ソースマップ、ツリーシェイク有効）
-- **依存方向**: `packages/core` → `packages/bullmq` の方向のみ許可（逆方向不可）
+- **依存方向**: `packages/bullmq` → `packages/core` / BullMQ。core から adapter への依存は禁止
 
 詳細は [.claude/docs/development.md](.claude/docs/development.md) を参照してください。
 
