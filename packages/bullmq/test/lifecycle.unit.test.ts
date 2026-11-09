@@ -78,6 +78,7 @@ class WorkerDouble extends QueueDouble {
     return this.blockingConnection.client;
   }
   run() {
+    if (this.running) return Promise.reject(new Error("Worker is already running."));
     this.running = true;
     const run = deferred();
     this.runs.push(run);
@@ -818,6 +819,20 @@ it("does not consume on a direct manager until every managed connection is ready
     client.status = "ready";
     client.emit("ready");
     await starting;
+    await manager.closeAll();
+  }
+});
+
+it("starts only new workers when a direct manager starts again", async () => {
+  const { manager, events } = fixture();
+  await manager.createWorker(queue, async () => {});
+  try {
+    await manager.startWorkers();
+    await manager.createWorker({ name: "beta", config: { bullmq: {} } }, async () => {});
+    await manager.startWorkers();
+    expect(workers().map((worker) => worker.runs.length)).toEqual([1, 1]);
+    expect(events).toEqual([]);
+  } finally {
     await manager.closeAll();
   }
 });

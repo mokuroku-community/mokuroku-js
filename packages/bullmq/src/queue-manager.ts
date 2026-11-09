@@ -317,7 +317,8 @@ export class BullMQQueueManager {
       for (const entry of this.workers.values()) {
         if (signal?.aborted) throw cancelled();
         // The rejection observer is attached by ManagedWorker for every invocation.
-        void (entry.value as ManagedWorker).run().catch(() => {});
+        const worker = entry.value as ManagedWorker;
+        if (!worker.isRunning()) void worker.run().catch(() => {});
       }
       await Promise.resolve();
     });
