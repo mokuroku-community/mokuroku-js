@@ -30,17 +30,19 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "pnpm exec -- biome lint .",
-    "format:fix": "pnpm exec -- biome check . --fix"
+    "format:fix": "pnpm exec -- biome check . --fix",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:types": "tsc -p tsconfig.contracts.json"
   },
   "keywords": [],
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "@mokurokujs/core": "workspace:>=0.1.0",
+    "@mokurokujs/core": "workspace:^",
     "zod": "^4.0.0"
   },
   "peerDependencies": {
-    "bullmq": "^5.16.0"
+    "bullmq": "^5.16.0 || ^6.3.11"
   },
   "devDependencies": {
     "@testcontainers/redis": "11.14.0",

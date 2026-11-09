@@ -142,7 +142,7 @@ describeIfRuntimeAvailable(BullmqBackend.name, () => {
       const job = defineJob<{ id: string }>(`dedupe-${randomUUID()}`, {
         queue: queueDef,
       });
-      const jobId = `dedupe:${randomUUID()}`;
+      const jobId = `dedupe-${randomUUID()}`;
 
       let resolveProcessed: (() => void) | undefined;
       let runCount = 0;
@@ -178,7 +178,7 @@ describeIfRuntimeAvailable(BullmqBackend.name, () => {
         queue: queueDef,
         removeOnComplete: true,
       });
-      const jobId = `dedupe-removed:${randomUUID()}`;
+      const jobId = `dedupe-removed-${randomUUID()}`;
 
       let runCount = 0;
       let resolveFirstProcessed: (() => void) | undefined;
@@ -227,7 +227,7 @@ describeIfRuntimeAvailable(BullmqBackend.name, () => {
       const job = defineJob<{ id: string }>(`dedupe-delayed-${randomUUID()}`, {
         queue: queueDef,
       });
-      const jobId = `dedupe-delayed:${randomUUID()}`;
+      const jobId = `dedupe-delayed-${randomUUID()}`;
 
       const first = await backend.enqueue(job, { id: "first" }, { jobId, delay: 60_000 });
       const second = await backend.enqueue(job, { id: "second" }, { jobId, delay: 120_000 });
@@ -251,7 +251,7 @@ describeIfRuntimeAvailable(BullmqBackend.name, () => {
       const job = defineJob<{ id: string }>(`dedupe-bulk-${randomUUID()}`, {
         queue: queueDef,
       });
-      const jobId = `dedupe-bulk:${randomUUID()}`;
+      const jobId = `dedupe-bulk-${randomUUID()}`;
 
       let resolveProcessed: (() => void) | undefined;
       let runCount = 0;

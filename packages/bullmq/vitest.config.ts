@@ -5,6 +5,7 @@ export default defineConfig({
     include: ["test/**/*.test.ts"],
     environment: "node",
     globals: false,
+    reporters: ["default", "./test/required-redis-reporter.ts"],
     dir: ".",
     globalSetup: ["./test/global-setup.ts"],
     testTimeout: 120_000,

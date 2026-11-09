@@ -32,7 +32,16 @@
             "dependsOn": [
                 "^test"
             ],
-            "outputs": []
+            "outputs": [],
+            "cache": false,
+            "env": [
+                "REQUIRE_REDIS_TESTS",
+                "SKIP_REDIS_TESTS",
+                "TEST_REDIS_DISABLED",
+                "VITEST_REDIS_IMAGE",
+                "DOCKER_*",
+                "TESTCONTAINERS_*"
+            ]
         },
         "clean": {
             "cache": false

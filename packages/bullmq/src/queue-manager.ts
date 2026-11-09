@@ -1,13 +1,17 @@
 import { formatInvalidStateMessage, InvalidStateError } from "@mokurokujs/core";
-import { type ConnectionOptions, type Job, Queue, Worker, type WorkerOptions } from "bullmq";
+import { type ConnectionOptions, type Job, Queue, type Worker, type WorkerOptions } from "bullmq";
 import { z } from "zod";
 
 import { InvalidConfigError, MissingConfigError, WorkerAlreadyExistsError } from "./errors.js";
 
-import type { JobHandlerContext, JobLogger, QueueDefinition, WorkerHooks } from "@mokurokujs/core";
-import type { BullmqBackend } from "./backend.js";
-import type { BullmqJobScheduler } from "./scheduler.js";
-import type { BullMQConnectionDefinition, BullMQQueueDefinition, BullmqQueueConfig } from "./types.js";
+import type { JobLifecycleOptions, QueueDefinition } from "@mokurokujs/core";
+import type {
+  BullMQConnectionDefinition,
+  BullMQQueueDefinition,
+  BullmqManagerError,
+  BullmqQueueConfig,
+  BullmqQueueManagerOptions,
+} from "./types.js";
 
 export type { WorkerHooks } from "@mokurokujs/core";
 
@@ -28,7 +32,9 @@ const WorkerHooksSchema = z
 const UnknownObjectSchema = z.record(z.string(), z.any());
 const BullmqConfigSchema = z
   .object({
-    connection: UnknownObjectSchema.optional(),
+    connection: z
+      .custom<ConnectionOptions>((value) => value !== null && typeof value === "object" && !Array.isArray(value))
+      .optional(),
     queueOptions: UnknownObjectSchema.optional(),
     workerOptions: UnknownObjectSchema.optional(),
     hooks: WorkerHooksSchema.optional(),
@@ -59,436 +65,328 @@ function getValidatedBullmqConfig(queueDef: QueueDefinition): ValidatedBullmqCon
   return (parsed.data?.bullmq ?? {}) as unknown as ValidatedBullmqConfig;
 }
 
-/**
- * BullMQ {@link Queue}/{@link Worker} instance manager.
- *
- * - Caches one {@link Queue} per queue name.
- * - Caches one {@link Worker} per queue name (creating a second one is an error).
- * - Intended to be shared between {@link BullmqBackend} and {@link BullmqJobScheduler}.
- *
- * BullMQ の {@link Queue}/{@link Worker} インスタンスを管理する。
- * - キュー名ごとに {@link Queue} を1つキャッシュする
- * - キュー名ごとに {@link Worker} を1つキャッシュする（二重作成はエラー）
- * - {@link BullmqBackend}（worker）と {@link BullmqJobScheduler} で共有利用する想定
- */
+import { asError, ConnectionMonitor, connectionHandles } from "./connection-monitor.js";
+import { cancelled, validateLifecycle, withDeadline } from "./lifecycle-operation.js";
+import { ManagedWorker } from "./managed-worker.js";
+import { attachWorkerHooks, type WorkerRegistrationOptions } from "./worker-hooks.js";
+
+type Resource = Queue<unknown, unknown, string> | ManagedWorker;
+interface Entry {
+  queue: string;
+  resource: "queue" | "worker";
+  value: Resource;
+  monitors: ConnectionMonitor[];
+  dispose: () => void;
+  cleanupErrors?: Error[];
+}
+
+/** Own resources, readiness and diagnostics. / 接続・リソースの寿命と障害通知を管理する。 */
 export class BullMQQueueManager {
   private readonly connection: ConnectionOptions;
-  private readonly queues = new Map<string, Queue>();
-  private readonly workers = new Map<string, Worker>();
+  private readonly queues = new Map<string, Entry>();
+  private readonly workers = new Map<string, Entry>();
+  private state: "active" | "closing" | "failed" = "active";
+  private closing?: Promise<void>;
+  private readonly waiters = new Set<(error: Error) => void>();
 
-  /**
-   * Manager state used to reject new operations during shutdown.
-   *
-   * - `active`: normal operation
-   * - `closing`: `closeAll()` is in progress
-   *
-   * シャットダウン中に新しい操作を拒否するための状態。
-   * - `active`: 通常動作
-   * - `closing`: `closeAll()` 実行中
-   */
-  private state: "active" | "closing" = "active";
-
-  constructor(connection: ConnectionOptions | BullMQConnectionDefinition) {
-    this.connection = this.resolveConnection(connection);
-  }
-
-  /**
-   * Resolve BullMQ connection options.
-   *
-   * When a {@link QueueDefinition} is provided, this reads
-   * `config.bullmq.connection`.
-   * This lets callers provide connection info using the same "definition" shape.
-   *
-   * BullMQ の接続情報を解決する。
-   * {@link QueueDefinition} が渡された場合は `config.bullmq.connection` から取り出す。
-   */
-  private resolveConnection(conn: ConnectionOptions | BullMQConnectionDefinition): ConnectionOptions {
-    if ("name" in conn && "config" in conn) {
-      const config = getValidatedBullmqConfig(conn);
-      const resolved = config.connection;
-      if (!resolved) {
-        throw new MissingConfigError(conn.name, "connection");
-      }
-      return resolved as unknown as ConnectionOptions;
+  constructor(
+    connection: ConnectionOptions | BullMQConnectionDefinition,
+    private readonly options: BullmqQueueManagerOptions = {},
+  ) {
+    if (
+      typeof connection === "object" &&
+      "name" in connection &&
+      "config" in connection &&
+      typeof connection.name === "string"
+    ) {
+      const definition = connection as BullMQConnectionDefinition;
+      getValidatedBullmqConfig(definition);
+      const resolved = definition.config?.bullmq?.connection;
+      if (!resolved) throw new MissingConfigError(definition.name, "connection");
+      this.connection = resolved;
+    } else {
+      this.connection = connection as ConnectionOptions;
     }
-    return conn as ConnectionOptions;
   }
 
-  /**
-   * Get an existing {@link Queue} instance or create a new one.
-   *
-   * Queue options are sourced from {@link QueueDefinition}:
-   * `config.bullmq.queueOptions`.
-   *
-   * {@link Queue} インスタンスを取得または作成する。
-   * キューオプションは {@link QueueDefinition} の `config.bullmq.queueOptions` から取得する。
-   */
-  getOrCreateQueue(queueDef: QueueDefinition): Queue {
-    if (this.state !== "active") {
+  private assertActive(): void {
+    if (this.state !== "active")
       throw new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "queue.getOrCreate",
-          subject: `queue:${queueDef.name}`,
-          state: `manager:${this.state}`,
-        }),
-        details: { queue: queueDef.name, managerState: this.state },
+        message: formatInvalidStateMessage({ action: "manager.operation", subject: "queueManager", state: this.state }),
+        details: { managerState: this.state },
       });
+  }
+
+  private notify(event: BullmqManagerError): void {
+    try {
+      this.options.logger?.error(`manager.${event.reason}`, { ...event });
+    } catch {
+      /* Diagnostics cannot break lifecycle operations. */
     }
+    try {
+      this.options.onError?.(event);
+    } catch (error) {
+      try {
+        this.options.logger?.error("manager.onError.failed", { error });
+      } catch {
+        /* Diagnostics must not interrupt resource ownership. */
+      }
+    }
+  }
 
+  private failure(error: Error): void {
+    for (const reject of this.waiters) reject(error);
+  }
+
+  private track(queue: string, resource: "queue" | "worker", value: Resource): Entry {
+    const entry: Entry = { queue, resource, value, monitors: [], dispose: () => {} };
+    const error = (error: Error) => {
+      if (entry.cleanupErrors) {
+        entry.cleanupErrors.push(error);
+        this.notify({ queue, resource, reason: "cleanup", error });
+      } else this.notify({ queue, resource, reason: "error", error });
+    };
+    const emitter = value as {
+      on(event: "error", listener: (error: Error) => void): unknown;
+      off(event: "error", listener: (error: Error) => void): unknown;
+    };
+    emitter.on("error", error);
+    const handles = connectionHandles(value, resource === "worker");
+    entry.monitors = handles.map(
+      (handle, index) =>
+        new ConnectionMonitor(
+          handle,
+          (error) => {
+            this.notify({
+              queue,
+              resource,
+              reason: "connection-ended",
+              connection: index === 0 ? "command" : "blocking",
+              error,
+            });
+            this.failure(error);
+          },
+          () => this.state === "closing",
+          index === 1,
+        ),
+    );
+    entry.dispose = () => {
+      for (const monitor of entry.monitors) monitor.dispose();
+      emitter.off("error", error);
+    };
+    return entry;
+  }
+
+  getOrCreateQueue(queueDef: QueueDefinition): Queue<unknown, unknown, string> {
+    this.assertActive();
     const existing = this.queues.get(queueDef.name);
-    if (existing) return existing;
-
+    if (existing) return existing.value as Queue<unknown, unknown, string>;
+    if ("status" in this.connection && this.connection.status === "end") {
+      const error = new Error("Redis connection already ended");
+      this.notify({
+        queue: queueDef.name,
+        resource: "queue",
+        reason: "connection-ended",
+        connection: "command",
+        error,
+      });
+      throw error;
+    }
     const config = getValidatedBullmqConfig(queueDef);
-    const queue = new Queue(queueDef.name, {
-      connection: this.connection,
+    const queue = new Queue<unknown, unknown, string>(queueDef.name, {
       ...(config.queueOptions ?? {}),
+      connection: this.connection,
     });
-    this.queues.set(queueDef.name, queue);
-
+    this.queues.set(queueDef.name, this.track(queueDef.name, "queue", queue));
     return queue;
   }
 
-  /**
-   * Create and start a {@link Worker} for a queue (backend usage).
-   *
-   * Hooks are evaluated in this order:
-   * backend-level → queue-level → job-level
-   *
-   * @see WorkerHooks
-   * @see JobHandlerContext
-   *
-   * {@link Worker} を作成して起動する（backend 用）。
-   * フック呼び出し順は backend → queue → job。
-   */
   async createWorker(
     queueDef: BullMQQueueDefinition,
-    processor: (job: Job) => Promise<void>,
-    options?: {
-      logger?: JobLogger;
-      backendHooks?: WorkerHooks;
-      jobHooks?: Map<string, WorkerHooks>;
-    },
-  ): Promise<Worker> {
-    if (this.state !== "active") {
-      throw new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "worker.create",
-          subject: `queue:${queueDef.name}`,
-          state: `manager:${this.state}`,
-        }),
-        details: { queue: queueDef.name, managerState: this.state },
-      });
-    }
-
-    const existing = this.workers.get(queueDef.name);
-    if (existing) {
-      throw new WorkerAlreadyExistsError(queueDef.name);
-    }
-
+    processor: (job: Job<unknown, unknown, string>) => Promise<unknown>,
+    options?: WorkerRegistrationOptions,
+  ): Promise<Worker<unknown, unknown, string>> {
+    this.assertActive();
+    if (this.workers.has(queueDef.name)) throw new WorkerAlreadyExistsError(queueDef.name);
     const config = getValidatedBullmqConfig(queueDef);
     const workerOptions: WorkerOptions = {
+      prefix: config.queueOptions?.prefix,
+      ...(config.workerOptions ?? {}),
       connection: this.connection,
       autorun: false,
-      ...(config.workerOptions ?? {}),
     };
-
-    const worker = new Worker(queueDef.name, processor, workerOptions);
-
-    // QueueDefinition 由来のキュー単位フック。
-    const queueHooks = config.hooks;
-
-    // backend/queue/job の3レベルのフックを合成する。
-    worker.on("active", (job) => {
-      options?.logger?.debug("job.active", {
-        jobName: job.name,
-        jobId: job.id,
-      });
-
-      const ctx: JobHandlerContext = {
-        jobName: job.name,
-        jobId: String(job.id),
-        attempt: job.attemptsMade + 1,
-        timestamp: new Date(job.timestamp),
-        logger: options?.logger,
-      };
-      options?.backendHooks?.onStart?.(ctx);
-      queueHooks?.onStart?.(ctx);
-      options?.jobHooks?.get(job.name)?.onStart?.(ctx);
-    });
-
-    worker.on("completed", (job) => {
-      options?.logger?.debug("job.completed", {
-        jobName: job.name,
-        jobId: job.id,
-      });
-
-      const ctx: JobHandlerContext = {
-        jobName: job.name,
-        jobId: String(job.id),
-        attempt: job.attemptsMade + 1,
-        timestamp: new Date(job.timestamp),
-        logger: options?.logger,
-      };
-      options?.backendHooks?.onSuccess?.(ctx);
-      queueHooks?.onSuccess?.(ctx);
-      options?.jobHooks?.get(job.name)?.onSuccess?.(ctx);
-    });
-
-    worker.on("failed", (job, err) => {
-      if (!job) return;
-
-      const ctx: JobHandlerContext = {
-        jobName: job.name,
-        jobId: String(job.id),
-        // BullMQ の仕様: `failed` イベント時点の `attemptsMade` は今回の試行を含んだ値になっている。
-        attempt: job.attemptsMade,
-        timestamp: new Date(job.timestamp),
-        logger: options?.logger,
-      };
-
-      const maxAttempts = job.opts.attempts ?? 1;
-      const remainingAttempts = maxAttempts - job.attemptsMade;
-
-      if (remainingAttempts > 0) {
-        options?.backendHooks?.onRetry?.(ctx, err, remainingAttempts);
-        queueHooks?.onRetry?.(ctx, err, remainingAttempts);
-        options?.jobHooks?.get(job.name)?.onRetry?.(ctx, err, remainingAttempts);
-      } else {
-        options?.backendHooks?.onFailure?.(ctx, err);
-        queueHooks?.onFailure?.(ctx, err);
-        options?.jobHooks?.get(job.name)?.onFailure?.(ctx, err);
+    // BullMQ validates these only AFTER allocating connections (5 and 6).
+    // 接続を作成してから例外を投げる設定は、構築前に検証する。
+    const settings: WorkerOptions & { maxStartedAttempts?: number } = {
+      concurrency: 1,
+      stalledInterval: 30_000,
+      drainDelay: 5,
+      maxStalledCount: 1,
+      ...workerOptions,
+    };
+    if (!settings.connection) throw new Error("Worker requires a connection");
+    if (typeof processor !== "function") throw new Error("Worker requires a processor function");
+    if (typeof settings.maxStalledCount !== "number" || settings.maxStalledCount < 0)
+      throw new Error("maxStalledCount must be greater or equal than 0");
+    if (typeof settings.maxStartedAttempts === "number" && settings.maxStartedAttempts < 0)
+      throw new Error("maxStartedAttempts must be greater or equal than 0");
+    if (typeof settings.stalledInterval !== "number" || settings.stalledInterval <= 0)
+      throw new Error("stalledInterval must be greater than 0");
+    if (typeof settings.drainDelay !== "number" || settings.drainDelay <= 0)
+      throw new Error("drainDelay must be greater than 0");
+    if (typeof settings.concurrency !== "number" || settings.concurrency < 1 || !Number.isFinite(settings.concurrency))
+      throw new Error("concurrency must be a finite number greater than 0");
+    const worker = new ManagedWorker(queueDef.name, processor, workerOptions);
+    const entry = this.track(queueDef.name, "worker", worker);
+    const disposeHooks = attachWorkerHooks(worker, config.hooks, options);
+    const dispose = entry.dispose;
+    entry.dispose = () => {
+      disposeHooks();
+      dispose();
+      worker.onRunEnded = undefined;
+    };
+    worker.onRunEnded = (reason, error) => {
+      this.notify({ queue: queueDef.name, resource: "worker", reason, error });
+      this.failure(error);
+      for (const hook of [options?.backendHooks, config.hooks]) {
+        try {
+          hook?.onWorkerError?.({ queue: queueDef.name, error });
+        } catch (callbackError) {
+          try {
+            this.options.logger?.error("worker.onWorkerError.failed", { error: callbackError });
+          } catch {}
+        }
       }
-
-      options?.logger?.error("job.failed", {
-        jobName: job.name,
-        jobId: job.id,
-        error: err,
-      });
-    });
-
-    worker.on("error", (err) => {
-      options?.logger?.error("worker.error", {
-        queue: queueDef.name,
-        error: err,
-      });
-
-      options?.backendHooks?.onWorkerError?.({
-        queue: queueDef.name,
-        error: err,
-      });
-      queueHooks?.onWorkerError?.({ queue: queueDef.name, error: err });
-    });
-
-    this.workers.set(queueDef.name, worker);
-
-    // `autorun: false` にして、リスナーを付けてから起動する。
-    // `run()` 失敗時に unhandled rejection にならないよう `catch` する。
-    worker.run().catch((err) => {
-      options?.logger?.error("worker.run.error", {
-        queue: queueDef.name,
-        error: err,
-      });
-
-      options?.backendHooks?.onWorkerError?.({
-        queue: queueDef.name,
-        error: err,
-      });
-      queueHooks?.onWorkerError?.({ queue: queueDef.name, error: err });
-    });
-
+    };
+    this.workers.set(queueDef.name, entry);
     return worker;
   }
 
-  /**
-   * Close all workers and queues managed by this instance.
-   *
-   * If `timeout` is set, workers that do not shut down in time may be forced.
-   *
-   * 管理中の Worker/Queue をすべて閉じる。
-   * `timeout` を指定した場合、期限内に止まらない Worker を強制停止することがある。
-   */
-  async closeAll(options?: { timeout?: number }): Promise<void> {
-    if (this.state === "closing") {
-      throw new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "manager.closeAll",
-          subject: "queueManager",
-          state: "manager:closing",
-        }),
-        details: { managerState: this.state },
-      });
+  /** Wait existing resources without starting consumption. / 取得を開始せず全接続を待つ。 */
+  async waitForReady(signal?: AbortSignal, begin?: () => Promise<void> | void): Promise<void> {
+    this.assertActive();
+    const controller = new AbortController();
+    let rejectFailure!: (error: Error) => void;
+    const failure = new Promise<never>((_, reject) => {
+      rejectFailure = reject;
+    });
+    const abort = () => rejectFailure(cancelled());
+    this.waiters.add(rejectFailure);
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      if (signal?.aborted) throw cancelled();
+      const operation = (async () => {
+        await begin?.();
+        if (signal?.aborted) throw cancelled();
+        const entries = [...this.queues.values(), ...this.workers.values()];
+        await Promise.all(
+          entries.flatMap((entry) => entry.monitors.map((monitor) => monitor.ready(controller.signal))),
+        );
+        if (signal?.aborted) throw cancelled();
+      })();
+      await Promise.race([failure, operation]);
+    } finally {
+      controller.abort();
+      this.waiters.delete(rejectFailure);
+      signal?.removeEventListener("abort", abort);
     }
+  }
 
+  async ready(queues: readonly QueueDefinition[] = [], options?: JobLifecycleOptions): Promise<void> {
+    validateLifecycle(options);
+    this.assertActive();
+    const controller = new AbortController();
+    const operation = this.waitForReady(controller.signal, () => {
+      for (const queue of queues) this.getOrCreateQueue(queue);
+    });
+    await withDeadline(operation, options, () => controller.abort());
+  }
+
+  /** Start only after all resources are ready; latch immediate run exits. / 全接続準備後に取得する。 */
+  async startWorkers(signal?: AbortSignal): Promise<void> {
+    await this.waitForReady(signal, async () => {
+      for (const entry of this.workers.values()) {
+        if (signal?.aborted) throw cancelled();
+        // The rejection observer is attached by ManagedWorker for every invocation.
+        void (entry.value as ManagedWorker).run().catch(() => {});
+      }
+      await Promise.resolve();
+    });
+  }
+
+  closeAll(options?: JobLifecycleOptions): Promise<void> {
+    try {
+      validateLifecycle(options);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (this.closing) return this.closing;
+    if (this.state === "failed")
+      return Promise.reject(new InvalidStateError({ message: "Manager cleanup failed; create a new manager" }));
     this.state = "closing";
-
-    const workers = Array.from(this.workers.values());
-    const queues = Array.from(this.queues.values());
-
-    const closeWorkers = (force: boolean) => Promise.all(workers.map((worker) => worker.close(force)));
-    const closeQueues = () => Promise.all(queues.map((queue) => queue.close()));
-
-    if (options?.timeout == null) {
-      await closeWorkers(false);
-      await closeQueues();
-    } else {
-      // 期限付きで graceful close を試し、タイムアウトしたら強制停止する。
-      const timeoutError = new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "manager.closeAll",
-          subject: "queueManager",
-          state: `timeout:${options.timeout}`,
-        }),
-        details: { timeout: options.timeout },
-      });
-      let timeoutHandle: Parameters<typeof clearTimeout>[0] | undefined;
-      const gracefulClose = closeWorkers(false);
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => reject(timeoutError), options.timeout);
-      });
-
-      let timedOut = false;
+    this.failure(cancelled());
+    for (const entry of [...this.workers.values(), ...this.queues.values()]) entry.cleanupErrors = [];
+    const close = async (entry: Entry): Promise<Error[]> => {
+      const errors = entry.cleanupErrors ?? [];
       try {
-        await Promise.race([gracefulClose, timeoutPromise]);
-        await gracefulClose;
+        await entry.value.close();
       } catch (error) {
-        if (error === timeoutError) {
-          timedOut = true;
-          gracefulClose.catch(() => {});
-        } else {
-          throw error;
+        const normalized = asError(error);
+        if (!errors.includes(normalized)) {
+          errors.push(normalized);
+          this.notify({ queue: entry.queue, resource: entry.resource, reason: "cleanup", error: normalized });
         }
       } finally {
-        if (timeoutHandle) {
-          clearTimeout(timeoutHandle);
-        }
+        entry.dispose();
       }
-
-      if (timedOut) {
-        await closeWorkers(true);
+      return errors;
+    };
+    const cleanup = (async () => {
+      const workerErrors = await Promise.all([...this.workers.values()].map(close));
+      const queueErrors = await Promise.all([...this.queues.values()].map(close));
+      const errors = [...workerErrors.flat(), ...queueErrors.flat()];
+      if (errors.length) {
+        this.state = "failed";
+        throw new AggregateError(errors, "Failed to close BullMQ resources");
       }
-
-      // worker 停止後に queue を閉じる（途中の Redis コマンドを壊さないため）。
-      await closeQueues();
-    }
-
-    this.workers.clear();
-    this.queues.clear();
-    this.state = "active";
+      this.workers.clear();
+      this.queues.clear();
+      this.state = "active";
+    })();
+    this.closing = withDeadline(cleanup, options);
+    void cleanup.then(
+      () => {
+        this.closing = undefined;
+      },
+      () => {
+        this.closing = undefined;
+      },
+    );
+    return this.closing;
   }
 
-  /**
-   * Pause all workers.
-   * New jobs will not be picked up, but in-flight jobs keep running.
-   *
-   * すべての Worker を一時停止する。
-   * 新規ジョブの取得を止めるが、実行中ジョブは完了まで継続する。
-   */
+  private worker(queue: string): ManagedWorker {
+    this.assertActive();
+    const entry = this.workers.get(queue);
+    if (!entry) throw new InvalidStateError({ message: `No worker for queue ${queue}`, details: { queue } });
+    return entry.value as ManagedWorker;
+  }
   async pauseAll(): Promise<void> {
-    if (this.state !== "active") {
-      throw new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "worker.pauseAll",
-          subject: "queueManager",
-          state: `manager:${this.state}`,
-        }),
-        details: { managerState: this.state },
-      });
-    }
-
-    const workers = Array.from(this.workers.values());
-    await Promise.all(workers.map((worker) => worker.pause()));
+    this.assertActive();
+    await Promise.all([...this.workers.keys()].map((name) => this.pauseQueue(name)));
   }
-
-  /**
-   * Resume all paused workers.
-   *
-   * すべての Worker を再開する。
-   */
   async resumeAll(): Promise<void> {
-    if (this.state !== "active") {
-      throw new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "worker.resumeAll",
-          subject: "queueManager",
-          state: `manager:${this.state}`,
-        }),
-        details: { managerState: this.state },
-      });
-    }
-
-    const workers = Array.from(this.workers.values());
-    await Promise.all(workers.map((worker) => worker.resume()));
+    this.assertActive();
+    await Promise.all([...this.workers.keys()].map((name) => this.resumeQueue(name)));
   }
-
-  /**
-   * Pause the worker for a specific queue name.
-   *
-   * 指定したキュー名の Worker を一時停止する。
-   */
-  async pauseQueue(queueName: string): Promise<void> {
-    if (this.state !== "active") {
-      throw new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "worker.pauseQueue",
-          subject: `queue:${queueName}`,
-          state: `manager:${this.state}`,
-        }),
-        details: { queue: queueName, managerState: this.state },
-      });
-    }
-
-    const worker = this.workers.get(queueName);
-    if (!worker) {
-      throw new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "worker.pauseQueue",
-          subject: `queue:${queueName}`,
-          state: "worker:missing",
-        }),
-        details: { queue: queueName },
-      });
-    }
-
-    await worker.pause();
+  async pauseQueue(name: string): Promise<void> {
+    await this.worker(name).pause();
   }
-
-  /**
-   * Resume the worker for a specific queue name.
-   *
-   * 指定したキュー名の Worker を再開する。
-   */
-  async resumeQueue(queueName: string): Promise<void> {
-    if (this.state !== "active") {
-      throw new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "worker.resumeQueue",
-          subject: `queue:${queueName}`,
-          state: `manager:${this.state}`,
-        }),
-        details: { queue: queueName, managerState: this.state },
-      });
-    }
-
-    const worker = this.workers.get(queueName);
-    if (!worker) {
-      throw new InvalidStateError({
-        message: formatInvalidStateMessage({
-          action: "worker.resumeQueue",
-          subject: `queue:${queueName}`,
-          state: "worker:missing",
-        }),
-        details: { queue: queueName },
-      });
-    }
-
+  async resumeQueue(name: string): Promise<void> {
+    const worker = this.worker(name);
+    await this.waitForReady();
     await worker.resume();
   }
-
-  /**
-   * Get the resolved BullMQ connection options.
-   *
-   * 解決済みの BullMQ 接続情報を取得する。
-   */
   getConnection(): ConnectionOptions {
     return this.connection;
   }

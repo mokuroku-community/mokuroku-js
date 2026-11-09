@@ -10,6 +10,8 @@ on:
       - 'packages/bullmq/**'
       - '.github/workflows/ci.yml'
       - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'tsconfig.json'
       - 'turbo.json'
   pull_request:
@@ -21,6 +23,8 @@ on:
       - 'packages/bullmq/**'
       - '.github/workflows/ci.yml'
       - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'tsconfig.json'
       - 'turbo.json'
   workflow_dispatch:
@@ -45,6 +49,8 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
       - name: Test
+        env:
+          REQUIRE_REDIS_TESTS: "1"
         run: pnpm test
 
   bullmq-compat:
@@ -53,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bullmq: ["^5.16.0"]
+        bullmq: ["5.16.0", "6.3.11", "^5.16.0", "^6.3.11"]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -74,18 +80,29 @@ jobs:
           
           pkg.devDependencies ??= {};
           pkg.devDependencies.bullmq = process.env.BULLMQ_VERSION;
+          // Validate the candidate peer range in CI before widening the published manifest.
+          pkg.peerDependencies.bullmq = '^5.16.0 || ^6.3.11';
           
           writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
           NODE
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-      - name: Build core
-        run: pnpm --filter @mokurokujs/core build
-      - name: Build adapter
-        run: pnpm --filter @mokurokujs/bullmq-adapter build
-      - name: Typecheck adapter
-        run: pnpm --filter @mokurokujs/bullmq-adapter typecheck
-      - name: Test adapter
+        run: pnpm install --no-frozen-lockfile --strict-peer-dependencies
+      - name: Update to newest release within requested major range
+        if: startsWith(matrix.bullmq, '^')
+        env:
+          BULLMQ_VERSION: ${{ matrix.bullmq }}
+        run: pnpm --filter @mokurokujs/bullmq-adapter update "bullmq@$BULLMQ_VERSION" --config.strict-peer-dependencies=true
+      - name: Resolved BullMQ version
+        run: pnpm --filter @mokurokujs/bullmq-adapter exec node -p "require('bullmq/package.json').version"
+      - name: Fresh build
+        run: pnpm clean && pnpm build --force
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Type contracts
+        run: pnpm --filter @mokurokujs/bullmq-adapter test:types
+      - name: Redis tests (required, no skips)
+        env:
+          REQUIRE_REDIS_TESTS: "1"
         run: pnpm --filter @mokurokujs/bullmq-adapter test
 
   lint:
