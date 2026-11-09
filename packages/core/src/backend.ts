@@ -100,8 +100,21 @@ export interface BulkEnqueueItem<TPayload> {
  * `hooks` は `unknown` としておき、バックエンドアダプタ側で独自型に変換/検証できるようにする。
  */
 export interface RegisterHandlerOptions {
+  /**
+   * Use this handler as the fallback for its queue.
+   * このハンドラーを対象キューのフォールバックとして使う。
+   */
+  defaultForQueue?: boolean;
   hooks?: unknown;
   [key: string]: unknown;
+}
+
+/**
+ * Lifecycle operation options. Timeout is an operation deadline in milliseconds.
+ * ライフサイクル操作の設定。timeout は操作全体の期限（ミリ秒）。
+ */
+export interface JobLifecycleOptions {
+  timeout?: number;
 }
 
 /**
@@ -110,18 +123,27 @@ export interface RegisterHandlerOptions {
  * キュープロバイダ（BullMQ 等）が実装するバックエンドアダプタのインターフェース。
  */
 export interface JobBackend {
-  enqueue<TPayload>(job: JobDefinition<TPayload>, payload: TPayload, options?: EnqueueOptions): Promise<EnqueueResult>;
+  enqueue<TPayload>(
+    job: JobDefinition<TPayload, unknown>,
+    payload: TPayload,
+    options?: EnqueueOptions,
+  ): Promise<EnqueueResult>;
 
-  enqueueBulk<TPayload>(job: JobDefinition<TPayload>, items: BulkEnqueueItem<TPayload>[]): Promise<EnqueueResult[]>;
+  enqueueBulk<TPayload>(
+    job: JobDefinition<TPayload, unknown>,
+    items: BulkEnqueueItem<TPayload>[],
+  ): Promise<EnqueueResult[]>;
 
   registerHandler<TPayload>(
-    job: JobDefinition<TPayload>,
-    handler: JobHandler<TPayload>,
+    job: JobDefinition<TPayload, unknown>,
+    handler: JobHandler<TPayload, unknown>,
     options?: RegisterHandlerOptions,
   ): void;
 
-  start(): Promise<void>;
-  stop(options?: { timeout?: number }): Promise<void>;
+  ready?(queues?: readonly QueueDefinition[], options?: JobLifecycleOptions): Promise<void>;
+
+  start(options?: JobLifecycleOptions): Promise<void>;
+  stop(options?: JobLifecycleOptions): Promise<void>;
 
   /**
    * Pause all workers.

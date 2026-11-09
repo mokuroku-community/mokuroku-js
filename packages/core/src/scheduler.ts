@@ -50,7 +50,10 @@ export interface JobScheduleOptions<TPayload = unknown> {
  * cron / repeatable job を扱う抽象インターフェース。
  */
 export interface JobScheduler {
-  upsert<TPayload>(job: JobDefinition<TPayload>, options: JobScheduleOptions<TPayload>): Promise<void>;
+  upsert<TPayload>(
+    job: JobDefinition<TPayload, unknown>,
+    options: JobScheduleOptions<NoInfer<TPayload>>,
+  ): Promise<void>;
 
-  remove<TPayload>(job: JobDefinition<TPayload>): Promise<void>;
+  remove<TPayload>(job: JobDefinition<TPayload, unknown>): Promise<void>;
 }

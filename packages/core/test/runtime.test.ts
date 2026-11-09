@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import type { BulkEnqueueItem, EnqueueOptions, EnqueueResult, JobBackend, RegisterHandlerOptions } from "../src/backend.js";
-import type { JobHandler } from "../src/handler.js";
 import { defineJob, type JobDefinition } from "../src/job.js";
 import { defineQueue, type QueueDefinition } from "../src/queue.js";
 import { JobRuntime } from "../src/runtime.js";
+
+import type {
+  BulkEnqueueItem,
+  EnqueueOptions,
+  EnqueueResult,
+  JobBackend,
+  RegisterHandlerOptions,
+} from "../src/backend.js";
+import type { JobHandler } from "../src/handler.js";
 
 class RecordingBackend implements JobBackend {
   readonly enqueueCalls: {
@@ -105,15 +112,19 @@ describe(JobRuntime.name, () => {
       removeOnFail: true,
     });
 
-    const result = await runtime.enqueue(job, { email: "user@example.com" }, {
-      attempts: 5,
-      backoff: { type: "exponential", delay: 2_000 },
-      removeOnComplete: { count: 10 },
-      removeOnFail: { age: 3_600 },
-      delay: 30_000,
-      jobId: "tenant-1:send-email",
-      jobName: "send-email-now",
-    });
+    const result = await runtime.enqueue(
+      job,
+      { email: "user@example.com" },
+      {
+        attempts: 5,
+        backoff: { type: "exponential", delay: 2_000 },
+        removeOnComplete: { count: 10 },
+        removeOnFail: { age: 3_600 },
+        delay: 30_000,
+        jobId: "tenant-1:send-email",
+        jobName: "send-email-now",
+      },
+    );
 
     expect(result).toEqual({
       jobId: "tenant-1:send-email",
@@ -171,6 +182,36 @@ describe(JobRuntime.name, () => {
       options: { concurrency: 2, hooks },
     });
     expect(backend.handlerCalls[0]?.job.options.queue).toBe(queue);
+  });
+
+  it("delegates ready arguments and waits for the backend result", async () => {
+    const backend = new RecordingBackend();
+    const queues = [defineQueue("ready").build()] as const;
+    const options = { timeout: 100 };
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const readyBackend = Object.assign(backend, {
+      ready(actualQueues?: readonly QueueDefinition[], actualOptions?: { timeout?: number }) {
+        expect(actualQueues).toBe(queues);
+        expect(actualOptions).toBe(options);
+        return pending;
+      },
+    });
+    const result = new JobRuntime(readyBackend).ready(queues, options);
+    expect(result).toBe(pending);
+    release();
+    await expect(result).resolves.toBeUndefined();
+  });
+
+  it("rejects ready when the backend does not support it", async () => {
+    const runtime = new JobRuntime(new RecordingBackend());
+    await expect(runtime.ready()).rejects.toMatchObject({
+      name: "InvalidStateError",
+      code: "INVALID_STATE",
+      details: { capability: "ready" },
+    });
   });
 
   it("delegates worker lifecycle controls", async () => {

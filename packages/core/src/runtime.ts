@@ -1,4 +1,13 @@
-import type { BulkEnqueueItem, EnqueueOptions, EnqueueResult, JobBackend, RegisterHandlerOptions } from "./backend.js";
+import { InvalidStateError } from "./errors.js";
+
+import type {
+  BulkEnqueueItem,
+  EnqueueOptions,
+  EnqueueResult,
+  JobBackend,
+  JobLifecycleOptions,
+  RegisterHandlerOptions,
+} from "./backend.js";
 import type { JobHandler } from "./handler.js";
 import type { JobDefinition } from "./job.js";
 import type { QueueDefinition } from "./queue.js";
@@ -34,8 +43,8 @@ export class JobRuntime {
    * @see EnqueueResult
    */
   async enqueue<TPayload>(
-    job: JobDefinition<TPayload>,
-    payload: TPayload,
+    job: JobDefinition<TPayload, unknown>,
+    payload: NoInfer<TPayload>,
     options?: EnqueueOptions,
   ): Promise<EnqueueResult> {
     return await this.backend.enqueue(job, payload, options);
@@ -50,8 +59,8 @@ export class JobRuntime {
    * @see EnqueueResult
    */
   async enqueueBulk<TPayload>(
-    job: JobDefinition<TPayload>,
-    items: BulkEnqueueItem<TPayload>[],
+    job: JobDefinition<TPayload, unknown>,
+    items: BulkEnqueueItem<NoInfer<TPayload>>[],
   ): Promise<EnqueueResult[]> {
     return await this.backend.enqueueBulk(job, items);
   }
@@ -67,12 +76,28 @@ export class JobRuntime {
    *
    * @see RegisterHandlerOptions
    */
-  handle<TPayload>(
-    job: JobDefinition<TPayload>,
-    handler: JobHandler<TPayload>,
+  handle<TPayload, TResult = void>(
+    job: JobDefinition<TPayload, TResult>,
+    handler: JobHandler<NoInfer<TPayload>, NoInfer<TResult>>,
     options?: RegisterHandlerOptions,
   ): void {
     this.backend.registerHandler(job, handler, options);
+  }
+
+  /**
+   * Wait for queue connections without starting workers.
+   * Worker を起動せずにキュー接続の準備完了を待つ。
+   */
+  ready(queues?: readonly QueueDefinition[], options?: JobLifecycleOptions): Promise<void> {
+    if (!this.backend.ready) {
+      return Promise.reject(
+        new InvalidStateError({
+          message: "Backend does not support readiness",
+          details: { capability: "ready" },
+        }),
+      );
+    }
+    return this.backend.ready(queues, options);
   }
 
   /**
@@ -80,20 +105,18 @@ export class JobRuntime {
    *
    * Worker を起動する（バックエンド側の実行リソースも含む）。
    */
-  start(): Promise<void> {
-    return this.backend.start();
+  start(options?: JobLifecycleOptions): Promise<void> {
+    return this.backend.start(options);
   }
 
   /**
    * Stop workers.
    *
-   * If `timeout` is set, the backend may force-stop workers that do not
-   * shut down gracefully within the deadline.
+   * The backend applies timeout as a deadline for the entire operation.
    *
-   * Worker を停止する。
-   * `timeout` を指定した場合、期限内に停止できない Worker を強制停止することがある。
+   * バックエンドは timeout を操作全体の期限として扱う。
    */
-  stop(options?: { timeout?: number }): Promise<void> {
+  stop(options?: JobLifecycleOptions): Promise<void> {
     return this.backend.stop(options);
   }
 

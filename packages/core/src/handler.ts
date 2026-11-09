@@ -45,4 +45,4 @@ export interface JobHandlerContext {
  *
  * ジョブハンドラー関数。
  */
-export type JobHandler<TPayload> = (payload: TPayload, ctx: JobHandlerContext) => Promise<void>;
+export type JobHandler<TPayload, TResult = void> = (payload: TPayload, ctx: JobHandlerContext) => Promise<TResult>;

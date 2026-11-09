@@ -27,7 +27,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.type-tests.json --noEmit",
     "test": "vitest run",
     "lint": "pnpm exec -- biome lint .",
     "format:fix": "pnpm exec -- biome check . --fix"
