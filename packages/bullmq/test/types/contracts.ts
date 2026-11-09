@@ -28,6 +28,22 @@ function notification(event: BullmqManagerError) {
 void notification;
 void backend.enqueue(result, { id: 1 });
 void backend.enqueueBulk(result, [{ payload: { id: 2 } }]);
+const channel = defineJob<"email" | "push", string>("channel");
+const wideChannel: string = "sms";
+void backend.enqueue(channel, "email");
+void backend.enqueueBulk(channel, [{ payload: "push" }]);
+// @ts-expect-error payload cannot widen the definition's literal union
+void backend.enqueue(channel, "sms");
+// @ts-expect-error a wider variable cannot widen payload inference
+void backend.enqueue(channel, wideChannel);
+// @ts-expect-error bulk payload cannot widen the definition's literal union
+void backend.enqueueBulk(channel, [{ payload: "sms" }]);
+// @ts-expect-error bulk variables cannot widen payload inference
+void backend.enqueueBulk(channel, [{ payload: wideChannel }]);
+// @ts-expect-error the backend interface must preserve the same constraint
+void erased.enqueue(channel, "sms");
+// @ts-expect-error the backend interface must preserve the bulk constraint
+void erased.enqueueBulk(channel, [{ payload: "sms" }]);
 void scheduler.remove(result);
 const legacy = defineJob<{ value: string }>("legacy-void");
 backend.registerHandler(legacy, async (payload) => {

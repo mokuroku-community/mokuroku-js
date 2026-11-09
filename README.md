@@ -175,6 +175,12 @@ Saved name/data/options are preserved. Results are stored in BullMQ's
 `returnvalue`; `enqueue` still returns `{ jobId, name }`, not the handler result.
 Types do not validate data already saved in Redis.
 
+**Direct manager migration:** `BullMQQueueManager.createWorker()` now creates a
+stopped worker, overriding `workerOptions.autorun`. After creating all workers,
+call `await manager.startWorkers()` to wait for every managed connection and begin
+consuming. `createWorker()` alone no longer processes jobs. `JobRuntime.start()`
+already performs this sequence; runtime users do not call `startWorkers()`.
+
 Register handlers while idle. Conflicting defaults, registration after start and
 new operations during stop reject. `ready()` prepares the default queue;
 `ready([])` waits only for existing resources. Unsupported backends reject readiness

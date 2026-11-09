@@ -34,7 +34,12 @@ export function fixture(config: BullmqQueueConfig = {}) {
     raw,
     events,
     async close() {
-      await backend.stop();
+      try {
+        await backend.stop();
+      } catch (error) {
+        await raw.close().catch(() => {});
+        throw error;
+      }
       await raw.close();
     },
   };

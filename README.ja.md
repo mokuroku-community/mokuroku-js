@@ -174,6 +174,12 @@ handler の失敗は retry 方針に従い、default への切替は行いませ
 は維持します。結果は BullMQ の `returnvalue` に保存されます。enqueue の戻り値は引き続き
 `{ jobId, name }` です。型定義は Redis に保存済みのデータを検証しません。
 
+**manager を直接使う場合の移行:** `BullMQQueueManager.createWorker()` は停止状態の
+Worker を作り、`workerOptions.autorun` を上書きします。全 Worker の作成後に
+`await manager.startWorkers()` を呼び、全接続の準備完了を待って取得を開始してください。
+`createWorker()` だけでは処理しません。`JobRuntime.start()` はこの手順を実行するため、
+runtime 利用側から `startWorkers()` を呼ぶ必要はありません。
+
 登録は idle 中に行います。重複 default、起動後の登録、停止中の新規操作は reject します。
 `ready()` は default queue を準備し、`ready([])` は既存リソースだけを待ちます。
 未対応 backend の readiness は `InvalidStateError` と `details.capability: "ready"` を返します。

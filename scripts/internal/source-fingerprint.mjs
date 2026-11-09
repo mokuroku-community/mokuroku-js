@@ -9,6 +9,8 @@ import { join, relative } from "node:path";
  * Dependencies/generated ignored outputs are not a source snapshot.
  */
 export async function fingerprintSource(root, run) {
+  const tracked = new Set((await run("git", ["ls-files", "--cached", "-z"], root, undefined, false)).split("\0"));
+  const untrackedSourceInputs = [];
   const names = (
     await run("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], root, undefined, false)
   )
@@ -22,7 +24,11 @@ export async function fingerprintSource(root, run) {
       const stat = await lstat(path);
       assert(!stat.isSymbolicLink(), `Source symlinks are unsupported: ${path}`);
       if (stat.isDirectory()) await sourceNames(path);
-      else names.push(relative(root, path));
+      else {
+        const name = relative(root, path);
+        names.push(name);
+        if (!tracked.has(name)) untrackedSourceInputs.push(name);
+      }
     }
   }
   for (const pkg of ["core", "bullmq"]) await sourceNames(join(root, "packages", pkg, "src"));
@@ -52,6 +58,7 @@ export async function fingerprintSource(root, run) {
     scope:
       "git tracked/nonignored untracked files plus packages/{core,bullmq}/src (including ignored inputs); regular files; names/modes/bytes",
     sha256: createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
+    untrackedSourceInputs: untrackedSourceInputs.sort(),
     entries,
   };
 }

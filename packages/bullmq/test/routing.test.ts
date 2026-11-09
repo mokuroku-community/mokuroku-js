@@ -146,10 +146,21 @@ redisSuite("persisted routing and results", () => {
   });
   it("rejects default collisions without destroying the first registration", async () => {
     const f = fixture();
-    f.backend.registerHandler(defineJob("first"), async () => {}, { defaultForQueue: true });
-    expect(() => f.backend.registerHandler(defineJob("second"), async () => {}, { defaultForQueue: true })).toThrow(
-      InvalidStateError,
-    );
-    await f.close();
+    f.backend.registerHandler(defineJob<unknown, string>("first"), async () => "first-result", {
+      defaultForQueue: true,
+    });
+    try {
+      expect(() => f.backend.registerHandler(defineJob("second"), async () => {}, { defaultForQueue: true })).toThrow(
+        InvalidStateError,
+      );
+      const saved = await f.raw.add("unknown-name", {});
+      if (!saved.id) throw new Error("Missing persisted job ID");
+      const id = saved.id;
+      await f.backend.start();
+      await until(async () => (await f.raw.getJob(id))?.finishedOn !== undefined);
+      expect((await f.raw.getJob(id))?.returnvalue).toBe("first-result");
+    } finally {
+      await f.close();
+    }
   });
 });

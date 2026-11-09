@@ -201,6 +201,12 @@ export class BullMQQueueManager {
     return queue;
   }
 
+  /**
+   * Create a stopped worker; call startWorkers() to wait for readiness and consume.
+   * Unlike older versions, createWorker never starts consumption automatically.
+   * 停止状態で Worker を作成する。全接続の準備と取得開始には startWorkers() を呼ぶ。
+   * 旧版の自動起動から変更しており、autorun 設定は上書きされる。
+   */
   async createWorker(
     queueDef: BullMQQueueDefinition,
     processor: (job: Job<unknown, unknown, string>) => Promise<unknown>,
@@ -292,18 +298,21 @@ export class BullMQQueueManager {
     }
   }
 
+  /** Wait for connections within a deadline that includes queue creation. / Queue 作成を含む期限内で接続を待つ。 */
   async ready(queues: readonly QueueDefinition[] = [], options?: JobLifecycleOptions): Promise<void> {
     validateLifecycle(options);
+    const started = Date.now();
     this.assertActive();
     const controller = new AbortController();
     const operation = this.waitForReady(controller.signal, () => {
       for (const queue of queues) this.getOrCreateQueue(queue);
     });
-    await withDeadline(operation, options, () => controller.abort());
+    await withDeadline(operation, options, () => controller.abort(), started);
   }
 
   /** Start only after all resources are ready; latch immediate run exits. / 全接続準備後に取得する。 */
   async startWorkers(signal?: AbortSignal): Promise<void> {
+    await this.waitForReady(signal);
     await this.waitForReady(signal, async () => {
       for (const entry of this.workers.values()) {
         if (signal?.aborted) throw cancelled();
@@ -375,9 +384,11 @@ export class BullMQQueueManager {
     this.assertActive();
     await Promise.all([...this.workers.keys()].map((name) => this.pauseQueue(name)));
   }
+  /** Check every connection once, then resume local workers. / 全接続を一度確認してローカル Worker を再開する。 */
   async resumeAll(): Promise<void> {
     this.assertActive();
-    await Promise.all([...this.workers.keys()].map((name) => this.resumeQueue(name)));
+    await this.waitForReady();
+    await Promise.all([...this.workers.values()].map((entry) => (entry.value as ManagedWorker).resume()));
   }
   async pauseQueue(name: string): Promise<void> {
     await this.worker(name).pause();

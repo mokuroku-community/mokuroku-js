@@ -62,6 +62,7 @@ class WorkerDouble extends QueueDouble {
   blockingConnection = new Connection();
   runs: ReturnType<typeof deferred>[] = [];
   paused = false;
+  running = false;
   closing = false;
   constructor(
     name: string,
@@ -77,6 +78,7 @@ class WorkerDouble extends QueueDouble {
     return this.blockingConnection.client;
   }
   run() {
+    this.running = true;
     const run = deferred();
     this.runs.push(run);
     return run.promise;
@@ -84,10 +86,14 @@ class WorkerDouble extends QueueDouble {
   isPaused() {
     return this.paused;
   }
+  isRunning() {
+    return this.running;
+  }
   async pause() {
     this.paused = true;
     await this.blockingConnection.disconnect();
     if (!boundary.keepRunOnPause) {
+      this.running = false;
       const run = this.runs.at(-1);
       if (!run) throw new Error("Missing running loop");
       run.resolve();
@@ -796,4 +802,111 @@ it("monitor disposal cancels all readiness waits even before initialization sett
   await tick();
   expect(connection._client.eventNames()).toEqual([]);
   await expect(monitor.ready()).rejects.toBeInstanceOf(InvalidStateError);
+});
+
+it("does not consume on a direct manager until every managed connection is ready", async () => {
+  const { manager } = fixture();
+  const pending = manager.getOrCreateQueue({ name: "pending" });
+  const client = (pending as unknown as QueueDouble).connection._client;
+  client.status = "connecting";
+  await manager.createWorker(queue, async () => {});
+  const starting = manager.startWorkers();
+  await tick();
+  try {
+    expect(workers()[0].runs).toHaveLength(0);
+  } finally {
+    client.status = "ready";
+    client.emit("ready");
+    await starting;
+    await manager.closeAll();
+  }
+});
+
+it("counts synchronous queue creation against the readiness deadline", async () => {
+  const { manager } = fixture();
+  let clock = 0;
+  vi.spyOn(Date, "now").mockImplementation(() => clock);
+  const create = manager.getOrCreateQueue.bind(manager);
+  vi.spyOn(manager, "getOrCreateQueue").mockImplementation((definition) => {
+    clock += 20;
+    return create(definition);
+  });
+  try {
+    await expect(manager.ready([queue], { timeout: 10 })).rejects.toThrow("timed out");
+  } finally {
+    await manager.closeAll();
+  }
+});
+
+it("shares one readiness pass when resuming all workers", async () => {
+  const { manager } = fixture();
+  await manager.createWorker(queue, async () => {});
+  await manager.createWorker({ name: "beta", config: { bullmq: {} } }, async () => {});
+  const ready = vi.spyOn(manager, "waitForReady");
+  try {
+    await manager.resumeAll();
+    expect(ready).toHaveBeenCalledTimes(1);
+  } finally {
+    await manager.closeAll();
+  }
+});
+
+it("keeps an overlapping pause's run marker while reporting the resumed run's failure", async () => {
+  const { backend, job, events } = fixture();
+  backend.registerHandler(job, async () => {});
+  await backend.start();
+  const worker = workers()[0];
+  const draining = deferred();
+  vi.spyOn(WorkerDouble.prototype, "pause").mockImplementation(async function (this: WorkerDouble) {
+    this.paused = true;
+    this.running = false;
+    await draining.promise;
+    this.runs[0].resolve();
+  });
+  const pausing = worker.pause();
+  await tick();
+  const resuming = worker.resume();
+  await tick();
+  draining.resolve();
+  await Promise.all([pausing, resuming]);
+  await tick();
+  try {
+    expect(events).toEqual([]);
+    const failure = new Error("genuine resumed failure");
+    worker.runs.at(-1)?.reject(failure);
+    await tick();
+    expect(events).toContainEqual(expect.objectContaining({ reason: "run-rejected", error: failure }));
+  } finally {
+    await backend.stop();
+  }
+});
+
+it("continues queue and job hooks when both a backend hook and its logger throw", async () => {
+  const calls: string[] = [];
+  const manager = new BullMQQueueManager({});
+  const backend = new BullmqBackend({
+    queueManager: manager,
+    defaultQueue: { name: "hooks", config: { bullmq: { hooks: { onStart: () => calls.push("queue") } } } },
+    hooks: {
+      onStart: () => {
+        throw new Error("hook");
+      },
+    },
+    logger: {
+      debug() {},
+      info() {},
+      warn() {},
+      error() {
+        throw new Error("logger");
+      },
+    },
+  });
+  backend.registerHandler(defineJob("job"), async () => {}, { hooks: { onStart: () => calls.push("job") } });
+  await backend.start();
+  try {
+    expect(() => workers()[0].emit("active", { name: "job", id: "1", attemptsMade: 0, timestamp: 0 })).not.toThrow();
+    expect(calls).toEqual(["queue", "job"]);
+  } finally {
+    await backend.stop();
+  }
 });

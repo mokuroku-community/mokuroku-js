@@ -125,13 +125,13 @@ export interface JobLifecycleOptions {
 export interface JobBackend {
   enqueue<TPayload>(
     job: JobDefinition<TPayload, unknown>,
-    payload: TPayload,
+    payload: NoInfer<TPayload>,
     options?: EnqueueOptions,
   ): Promise<EnqueueResult>;
 
   enqueueBulk<TPayload>(
     job: JobDefinition<TPayload, unknown>,
-    items: BulkEnqueueItem<TPayload>[],
+    items: BulkEnqueueItem<NoInfer<TPayload>>[],
   ): Promise<EnqueueResult[]>;
 
   registerHandler<TPayload>(

@@ -15,6 +15,7 @@ export function withDeadline<T>(
   operation: Promise<T>,
   options?: JobLifecycleOptions,
   expired?: () => void,
+  started = Date.now(),
 ): Promise<T> {
   if (options?.timeout === undefined) return operation;
   const timeout = options.timeout;
@@ -23,7 +24,6 @@ export function withDeadline<T>(
       expired?.();
       reject(new InvalidStateError({ message: "Lifecycle operation timed out", details: { timeout } }));
     };
-    const started = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => {
       const remaining = timeout - (Date.now() - started);
@@ -34,7 +34,8 @@ export function withDeadline<T>(
     operation.then(
       (value) => {
         if (timer !== undefined) clearTimeout(timer);
-        resolve(value);
+        if (Date.now() - started >= timeout) expire();
+        else resolve(value);
       },
       (error) => {
         if (timer !== undefined) clearTimeout(timer);

@@ -22,9 +22,10 @@ const run = (command, args, cwd = root, env = process.env, trimOutput = true) =>
 const sha = await run("git", ["rev-parse", "HEAD"]);
 assert.match(sha, /^[0-9a-f]{40}$/);
 const status = await run("git", ["status", "--porcelain=v1", "--untracked-files=all"]);
-if (process.argv.includes("--require-clean")) assert.equal(status, "", "CI artifacts require a clean source commit");
 const fingerprintBefore = await fingerprintSource(root, run);
-const version = `0.0.0-prep.g${sha}${status ? `.dirty.${fingerprintBefore.sha256}` : ""}`;
+const dirty = status !== "" || fingerprintBefore.untrackedSourceInputs.length > 0;
+if (process.argv.includes("--require-clean")) assert.equal(dirty, false, "CI artifacts require a clean source commit");
+const version = `0.0.0-prep.g${sha}${dirty ? `.dirty.${fingerprintBefore.sha256}` : ""}`;
 await mkdir(output, { recursive: true });
 assertOutsideSource(await realpath(output));
 assert.deepEqual(await readdir(output), [], "Output directory must be empty to avoid mixing artifacts");
@@ -33,7 +34,7 @@ const manifest = {
   createdAt: new Date().toISOString(),
   source: {
     sha,
-    dirty: status !== "",
+    dirty,
     status,
     fingerprintBefore,
   },

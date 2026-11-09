@@ -1,4 +1,5 @@
 import { runCommand } from "./internal/run-command.mjs";
+import { runRedisConsumer } from "./internal/run-redis-consumer.mjs";
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -68,15 +69,20 @@ try {
   await producer.ready([queue], { timeout: 10000 });
   assert.equal((await raw.getWorkers()).length, 0, "producer readiness created workers");
   const saved = await raw.add("saved-dynamic-name", { value: 42 }, { removeOnComplete: false });
+  const enqueued = await producer.enqueue(job, { value: 43 }, { jobName: "saved-dynamic-name", removeOnComplete: false });
+  assert(enqueued.jobId);
   await producer.stop({ timeout: 10000 });
   assert.equal((await raw.getWorkers()).length, 0, "producer stop created workers");
   await worker.start({ timeout: 10000 });
   await worker.ready([queue], { timeout: 10000 });
   const deadline = Date.now() + 15000;
   let completed;
+  let enqueuedCompleted;
   while (Date.now() < deadline) {
     completed = await raw.getJob(saved.id!);
-    if (completed && await completed.getState() === "completed") break;
+    enqueuedCompleted = await raw.getJob(enqueued.jobId);
+    if (completed && await completed.getState() === "completed" &&
+        enqueuedCompleted && await enqueuedCompleted.getState() === "completed") break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   completed = await raw.getJob(saved.id!);
@@ -85,6 +91,12 @@ try {
   assert.equal(completed.name, "saved-dynamic-name");
   assert.deepEqual(completed.data, { value: 42 });
   assert.equal(completed.returnvalue, "result:42");
+  enqueuedCompleted = await raw.getJob(enqueued.jobId);
+  assert(enqueuedCompleted);
+  assert.equal(await enqueuedCompleted.getState(), "completed");
+  assert.equal(enqueuedCompleted.name, "saved-dynamic-name");
+  assert.deepEqual(enqueuedCompleted.data, { value: 43 });
+  assert.equal(enqueuedCompleted.returnvalue, "result:43");
   await worker.stop({ timeout: 10000 });
   assert.equal((await raw.getWorkers()).length, 0, "stop left a worker registered");
   assert.equal(events.length, 0);
@@ -92,7 +104,7 @@ try {
   const client = await (shape.getBackend ? shape.getBackend().client : shape.client);
   const redis = (await client.info()).match(/redis_version:([^\\r\\n]+)/)?.[1];
   assert(redis);
-  console.log(JSON.stringify({ core: realpathSync(fileURLToPath(coreURL)), version: expected, redis, checks: ["esm", "shared-core", "declarations", "dynamic-name", "returnvalue", "ready", "producer-worker-zero", "stop"] }));
+  console.log(JSON.stringify({ core: realpathSync(fileURLToPath(coreURL)), version: expected, redis, checks: ["esm", "shared-core", "declarations", "dynamic-name", "returnvalue", "enqueue", "ready", "producer-worker-zero", "stop"] }));
 } finally {
   try { await worker.stop({ timeout: 10000 }); } finally {
     try { await producer.stop({ timeout: 10000 }); } finally {
@@ -101,7 +113,6 @@ try {
   }
 }
 `;
-let container;
 let temp;
 try {
   assert.equal(manifest.status, "packed");
@@ -203,6 +214,7 @@ try {
     assert.equal(await run("pnpm", ["exec", "tsc", "--version"], cwd), "Version 5.4.5");
     await run("pnpm", ["exec", "tsc", "-p", "tsconfig.json"], cwd);
     consumer.declarations = "passed";
+    let redisModuleURL;
     if (!connection) {
       if (process.env.PACK_TEST_REDIS_URL) {
         const url = new URL(process.env.PACK_TEST_REDIS_URL);
@@ -217,7 +229,7 @@ try {
         };
       } else {
         // Resolve the adapter's dev dependency, never a consumer/workspace package import.
-        const moduleURL = await run(
+        redisModuleURL = await run(
           process.execPath,
           [
             "--input-type=module",
@@ -226,18 +238,18 @@ try {
           ],
           join(root, "packages/bullmq"),
         );
-        const { RedisContainer } = await import(moduleURL);
-        container = await new RedisContainer("redis:7.4.2-alpine").start();
-        connection = { host: container.getHost(), port: container.getPort(), maxRetriesPerRequest: null };
       }
     }
-    const stdout = await run(process.execPath, ["out/fixture.js"], cwd, {
+    const env = {
       ...process.env,
       NODE_PATH: "",
       PREP_VERSION: manifest.version,
       SOURCE_ROOT: root,
       PREP_REDIS_CONNECTION: JSON.stringify(connection),
-    });
+    };
+    const stdout = redisModuleURL
+      ? await runRedisConsumer(redisModuleURL, cwd, { env, commands: receipt.commands })
+      : await run(process.execPath, ["out/fixture.js"], cwd, env);
     consumer.result = JSON.parse(stdout.trim().split("\n").at(-1));
     consumer.status = "passed";
   }
@@ -248,23 +260,14 @@ try {
   throw error;
 } finally {
   try {
-    if (container) await container.stop();
+    if (temp) await rm(temp, { recursive: true, force: true });
   } catch (error) {
     receipt.status = "failed";
     receipt.cleanupError = error.stack;
     console.error(error);
     process.exitCode = 1;
   } finally {
-    try {
-      if (temp) await rm(temp, { recursive: true, force: true });
-    } catch (error) {
-      receipt.status = "failed";
-      receipt.cleanupError = error.stack;
-      console.error(error);
-      process.exitCode = 1;
-    } finally {
-      receipt.finishedAt = new Date().toISOString();
-      await writeFile(join(artifactDir, "consumer-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
-    }
+    receipt.finishedAt = new Date().toISOString();
+    await writeFile(join(artifactDir, "consumer-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
   }
 }

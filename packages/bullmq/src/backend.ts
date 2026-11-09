@@ -172,7 +172,7 @@ export class BullmqBackend implements JobBackend {
 
   async enqueue<TPayload>(
     jobDef: JobDefinition<TPayload, unknown>,
-    payload: TPayload,
+    payload: NoInfer<TPayload>,
     enqueueOptions?: EnqueueOptions,
   ): Promise<EnqueueResult> {
     this.assertNotStopping();
@@ -199,7 +199,7 @@ export class BullmqBackend implements JobBackend {
 
   async enqueueBulk<TPayload>(
     jobDef: JobDefinition<TPayload, unknown>,
-    items: BulkEnqueueItem<TPayload>[],
+    items: BulkEnqueueItem<NoInfer<TPayload>>[],
   ): Promise<EnqueueResult[]> {
     this.assertNotStopping();
     const queueDef = jobDef.options.queue ?? this.defaultQueue;

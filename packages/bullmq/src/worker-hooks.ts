@@ -34,7 +34,11 @@ export function attachWorkerHooks(
     try {
       callback();
     } catch (error) {
-      options?.logger?.error("worker.hook.error", { error });
+      try {
+        options?.logger?.error("worker.hook.error", { error });
+      } catch {
+        // Diagnostic failures must not skip remaining hooks. / 診断失敗でも後続フックを実行する。
+      }
     }
   };
   const active = (job: Job) => {
