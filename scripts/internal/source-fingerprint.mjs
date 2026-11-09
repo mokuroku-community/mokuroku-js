@@ -9,7 +9,9 @@ import { join, relative } from "node:path";
  * Dependencies/generated ignored outputs are not a source snapshot.
  */
 export async function fingerprintSource(root, run) {
-  const tracked = new Set((await run("git", ["ls-files", "--cached", "-z"], root, undefined, false)).split("\0"));
+  const tracked = new Set(
+    (await run("git", ["ls-files", "--cached", "-z"], root, undefined, false)).split("\0").filter(Boolean),
+  );
   const untrackedSourceInputs = [];
   const names = (
     await run("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], root, undefined, false)

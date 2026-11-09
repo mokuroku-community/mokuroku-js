@@ -333,8 +333,13 @@ export class BullmqBackend implements JobBackend {
       });
     this.startWork = operation;
     this.starting = withDeadline(operation, options, () => {
-      this.state = "stopping";
       controller.abort();
+      if (this.startWork) this.state = "stopping";
+      else {
+        // A late success has already left the startup cleanup chain.
+        // 起動完了後に期限超過を検知した場合も Worker / Queue を回収する。
+        void this.stop().catch(() => {}); // Manager diagnostics retain cleanup failures.
+      }
     });
     return this.starting;
   }

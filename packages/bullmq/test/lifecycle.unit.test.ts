@@ -524,6 +524,45 @@ describe("deadline and pause regressions", () => {
     expect(workers()[1].runs).toHaveLength(1);
     await backend.stop();
   });
+  it("cleans up a late successful startup before any deadline timer runs and permits restart", async () => {
+    const { backend, manager, job } = fixture();
+    backend.registerHandler(job, async () => {});
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const startWorkers = manager.startWorkers.bind(manager);
+    vi.spyOn(manager, "startWorkers").mockImplementation(async (signal) => {
+      await startWorkers(signal);
+      now = 20;
+    });
+    try {
+      await expect(backend.start({ timeout: 10 })).rejects.toThrow("timed out");
+      await tick();
+      expect(workers()[0].closed).toBe(true);
+      expect(queues()[0].closed).toBe(true);
+      await backend.start();
+      expect(workers()).toHaveLength(2);
+    } finally {
+      await backend.stop();
+    }
+  });
+  it("reports late-start cleanup failure while still closing the remaining queues", async () => {
+    const { backend, manager, job, events } = fixture();
+    backend.registerHandler(job, async () => {});
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const failure = new Error("late cleanup failure");
+    const startWorkers = manager.startWorkers.bind(manager);
+    vi.spyOn(manager, "startWorkers").mockImplementation(async (signal) => {
+      await startWorkers(signal);
+      vi.spyOn(workers()[0], "close").mockRejectedValue(failure);
+      now = 20;
+    });
+    await expect(backend.start({ timeout: 10 })).rejects.toThrow("timed out");
+    await tick();
+    expect(queues()[0].closed).toBe(true);
+    expect(events).toContainEqual(expect.objectContaining({ reason: "cleanup", error: failure }));
+    await expect(backend.stop()).rejects.toThrow("cleanup failed");
+  });
   it("checks command readiness before resuming", async () => {
     const { backend, job } = fixture();
     backend.registerHandler(job, async () => {});
