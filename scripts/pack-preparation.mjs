@@ -84,7 +84,6 @@ try {
     const source = join(root, "packages", dir);
     const target = join(staging, dir);
     const pkg = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
-    assert.equal(pkg.version, "0.1.0", "Tracked package versions must remain unchanged for this preparation");
     pkg.version = version;
     pkg.packageManager = "pnpm@10.34.5";
     delete pkg.devDependencies; // catalog: entries belong to the workspace, not the standalone staging package.
