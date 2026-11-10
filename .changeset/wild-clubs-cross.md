@@ -1,6 +1,6 @@
 ---
-"@mokurokujs/core": major
-"@mokurokujs/bullmq-adapter": major
+"@mokurokujs/core": minor
+"@mokurokujs/bullmq-adapter": minor
 ---
 
 Add typed job results, queue default handlers, readiness and manager error events.
@@ -10,8 +10,9 @@ conflicting queue defaults and operations during stop now reject. Producer-only
 stop releases managed queues; lifecycle deadlines and cleanup failures reject
 rather than reporting successful release. Borrowed Redis clients remain owned by
 the caller. BullMQ support is ^5.16.0 || ^6.3.11; the adapter follows the matching
-core generation through workspace:^. These lifecycle and typing changes require
-a major change for both packages under the repository release policy.
+core generation through workspace:^. These lifecycle and typing changes are
+breaking changes during 0.x development. Release both packages as 0.2.0 without
+declaring a stable 1.0 API.
 
 Declare ioredis ^5.0.0 as an optional adapter peer: connection options require
 this driver (BullMQ 6 does not auto-install it). Borrowed-client users supply

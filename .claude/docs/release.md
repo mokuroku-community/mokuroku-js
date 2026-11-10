@@ -26,7 +26,10 @@ pnpm changeset
 2. **バージョンアップの種類**:
    - `patch`: バグ修正・内部改善（`0.x.Y` の Y を上げる）
    - `minor`: 後方互換性のある新機能追加（`0.X.y` の X を上げる）
-   - `major`: 破壊的変更（`X.y.z` の X を上げる）
+   - `major`: 1.x 以降の破壊的変更（`X.y.z` の X を上げる）
+
+0.x の開発段階では、破壊的変更も `minor` を選び、内容を説明に明記します。
+1.0.0 への移行は安定 API として公開する判断を別途行ってから選びます。
 3. **変更の説明**: 1行で変更内容を記述する（CHANGELOG に掲載される）。
 
 ### どのバージョンを選ぶか
@@ -35,7 +38,7 @@ pnpm changeset
 |-----------|-----------|
 | バグ修正、ドキュメント更新、リファクタリング | `patch` |
 | 新しい公開 API の追加（既存 API に影響なし） | `minor` |
-| 既存の公開 API の変更・削除 | `major` |
+| 既存の公開 API の変更・削除 | 0.x は `minor`、1.x 以降は `major` |
 
 ### 内部パッケージの扱い
 
@@ -78,7 +81,7 @@ pnpm version-packages
 ## #254 の準備成果物（publish なし）
 
 今回の型の floor（TypeScript 5.4 / NoInfer）、登録・停止契約の変更は両 package の
-major Changeset に記録します。追跡 manifest の `0.1.0` は変更しません。
+minor Changeset に記録し、次の公開版を 0.2.0 とします。pack 自体は追跡 manifest の版を変更しません。
 `pnpm pack:prep <workspace 外の空 directory> [--require-clean]` は fresh build した dist を
 staging にコピーし、両 package を同じ `0.0.0-prep.g<FULL_SHA>` に設定、adapter の core
 依存も同じ exact version にして pack します。通常の公開依存は `workspace:^` を維持します。
